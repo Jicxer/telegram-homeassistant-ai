@@ -1,0 +1,15 @@
+[Unit]
+Description=Home AI Telegram Bot
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=jicxer
+WorkingDirectory=/home/jicxer/home-ai
+EnvironmentFile=/home/jicxer/home-ai/.env
+ExecStart=/home/jicxer/home-ai/venv/bin/python3 src/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

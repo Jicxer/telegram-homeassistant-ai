@@ -1,0 +1,32 @@
+# Secrets — never commit these
+.env
+*.env
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Models and vector DBs (too large for git)
+models/
+*.gguf
+*.bin
+chroma_db/
+vector_store/
+
+# Logs
+*.log
+logs/
+
+# Memory / state files
+memory.json
+conversation_history.json
+
+# OS
+.DS_Store
+Thumbs.db
