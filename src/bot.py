@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from tools.plug import turn_on, turn_off, get_status
+from tools.plug import turn_on, turn_off, get_status, get_power
 import ollama
 from tools.wol import wake_desktop
 
@@ -42,6 +42,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /plug on — Turn plug on
 /plug off — Turn plug off
 /plug status — Check plug state
+/plug power — Get plug power consumption
 
 *Help*
 /help — Show this message
@@ -64,8 +65,10 @@ async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = turn_off()
     elif action == "status":
         result = get_status()
+    elif action == "power":
+        result = get_power()
     else:
-        result = "Unknown action. Use: on, off, status"
+        result = "Unknown action. Use: on, off, status, power"
     await update.message.reply_text(result)
 
 async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,7 +116,6 @@ app.add_handler(CommandHandler("wake", wake_command))
 app.add_handler(CommandHandler("help", help_command))
 app.add_handler(CommandHandler("plug", plug_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
 
 print("Bot is running...")
 app.run_polling()
