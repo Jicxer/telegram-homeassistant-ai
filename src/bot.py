@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 from tools.plug import turn_on, turn_off, get_status, get_power
 from tools.power import shutdown, reboot, monitor_shutdown
-from tools.weather import get_weather
+from tools.weather import get_weather, get_forecast
 import ollama
 from tools.wol import wake_desktop
 
@@ -38,8 +38,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *Power*
 /wake — Wake up the desktop
-/shutdown <machine> — Shutdown a machine _(coming soon)_
-/reboot <machine> — Reboot a machine _(coming soon)_
+/shutdown <machine> [now | +10 | 23:00] — Shutdown a machine now, in 10 minutes, or at 23:00
+/reboot <machine> — Reboot a machine
 
 *Smart Plug*
 /plug on — Turn plug on
@@ -47,12 +47,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /plug status — Check plug state
 /plug power — Get plug power consumption
 
-*Shutdown/Reboot*
-/shutdown <machine> [now | +10 | 23:00] — Shutdown a machine now, in 10 minutes, or at 23:00
-/reboot <machine> — Reboot a machine
-
 *Machines*
 /machines — List all configured machines
+
+*Weather* - Defaults to location defined in configuration
+/weather [location] — Current conditions
+/forecast [location] [1-3] — Multi-day forecast
 
 *Help*
 /help — Show this message
@@ -145,6 +145,22 @@ async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = get_weather(location)
     await update.message.reply_text(result)
 
+async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    days = 3
+    location = None
+    if context.args:
+        # Check if last arg is a number
+        if context.args[-1].isdigit():
+            days = int(context.args[-1])
+            location = " ".join(context.args[:-1]) or None
+        else:
+            location = " ".join(context.args)
+    result = get_forecast(location, days)
+    await update.message.reply_text(result)
+    
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -185,6 +201,7 @@ app.add_handler(CommandHandler("shutdown", shutdown_command))
 app.add_handler(CommandHandler("reboot", reboot_command))
 app.add_handler(CommandHandler("machines", machines_command))
 app.add_handler(CommandHandler("weather", weather_command))
+app.add_handler(CommandHandler("forecast", forecast_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
