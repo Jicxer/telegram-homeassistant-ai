@@ -206,7 +206,7 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 - [x] Shelly Gen2 smart plug control
 - [x] Power consumption monitoring (`/plug power`)
 - [x] Remote shutdown and reboot with time arguments
-- [ ] Weather tool (wttr.in)
+- [x] Weather tool (wttr.in)
 - [ ] Proper tool-calling agent architecture (LLM-native)
 
 ### Phase 2 — agent behaviour
