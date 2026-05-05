@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 from tools.plug import turn_on, turn_off, get_status, get_power
+from tools.power import shutdown, reboot
 import ollama
 from tools.wol import wake_desktop
 
@@ -44,6 +45,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /plug status — Check plug state
 /plug power — Get plug power consumption
 
+*Shutdown/Reboot*
+/shutdown <machine> [now|+10|23:00] — Shutdown a machine
+/reboot <machine> — Reboot a machine
+
 *Help*
 /help — Show this message
 
@@ -77,6 +82,29 @@ async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("Sending wake signal to desktop...")
     result = wake_desktop()
+    await update.message.reply_text(result)
+
+async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /shutdown <machine> [now|+minutes|HH:MM]")
+        return
+    machine = context.args[0].lower()
+    when = context.args[1] if len(context.args) > 1 else "now"
+    result = shutdown(machine, when)
+    await update.message.reply_text(result)
+
+async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /reboot <machine>")
+        return
+    machine = context.args[0].lower()
+    result = reboot(machine)
     await update.message.reply_text(result)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,6 +143,8 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("wake", wake_command))
 app.add_handler(CommandHandler("help", help_command))
 app.add_handler(CommandHandler("plug", plug_command))
+app.add_handler(CommandHandler("shutdown", shutdown_command))
+app.add_handler(CommandHandler("reboot", reboot_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
