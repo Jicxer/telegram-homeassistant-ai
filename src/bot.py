@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 from tools.plug import turn_on, turn_off, get_status, get_power
 from tools.power import shutdown, reboot, monitor_shutdown
+from tools.weather import get_weather
 import ollama
 from tools.wol import wake_desktop
 
@@ -135,7 +136,15 @@ async def machines_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tag = "  protected" if is_protected(name) else ""
         lines.append(f"• {name}{tag}")
     await update.message.reply_text("*Configured machines:*\n" + "\n".join(lines), parse_mode="Markdown")
-    
+
+async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    location = " ".join(context.args) if context.args else None
+    result = get_weather(location)
+    await update.message.reply_text(result)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -175,6 +184,7 @@ app.add_handler(CommandHandler("plug", plug_command))
 app.add_handler(CommandHandler("shutdown", shutdown_command))
 app.add_handler(CommandHandler("reboot", reboot_command))
 app.add_handler(CommandHandler("machines", machines_command))
+app.add_handler(CommandHandler("weather", weather_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
