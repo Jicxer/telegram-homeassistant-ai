@@ -3,6 +3,7 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from tools.plug import turn_on, turn_off, get_status
 import ollama
 from tools.wol import wake_desktop
 
@@ -25,6 +26,47 @@ MAX_HISTORY = 20
 
 def is_authorized(user_id: int) -> bool:
     return user_id == ALLOWED_USER_ID
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    help_text = """
+🤖 *Home AI Commands*
+
+*Power*
+/wake — Wake up the desktop
+/shutdown <machine> — Shutdown a machine _(coming soon)_
+/reboot <machine> — Reboot a machine _(coming soon)_
+
+*Smart Plug*
+/plug on — Turn plug on
+/plug off — Turn plug off
+/plug status — Check plug state
+
+*Help*
+/help — Show this message
+
+💬 You can also just chat naturally for questions and home automation help.
+"""
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /plug on | off | status")
+        return
+    action = context.args[0].lower()
+    if action == "on":
+        result = turn_on()
+    elif action == "off":
+        result = turn_off()
+    elif action == "status":
+        result = get_status()
+    else:
+        result = "Unknown action. Use: on, off, status"
+    await update.message.reply_text(result)
 
 async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
@@ -68,7 +110,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("wake", wake_command))
+app.add_handler(CommandHandler("help", help_command))
+app.add_handler(CommandHandler("plug", plug_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
 
 print("Bot is running...")
 app.run_polling()
