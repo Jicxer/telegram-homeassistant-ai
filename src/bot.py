@@ -159,7 +159,7 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             location = " ".join(context.args)
     result = get_forecast(location, days)
-    await update.message.reply_text(result)
+    await update.message.reply_text(result, parse_mode="HTML")
     
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
