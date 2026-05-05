@@ -16,7 +16,7 @@ def _ssh(host: str, user: str, command: str) -> tuple[bool, str]:
                 f"{user}@{host}",
                 command
             ],
-            capture_outpuSt=True,
+            capture_output=True,
             text=True,
             timeout=10
         )
