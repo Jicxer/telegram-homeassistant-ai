@@ -56,7 +56,7 @@ async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Unauthorized.")
         return
     if not context.args:
-        await update.message.reply_text("Usage: /plug on | off | status")
+        await update.message.reply_text("Usage: /plug on | off | status | power")
         return
     action = context.args[0].lower()
     if action == "on":
