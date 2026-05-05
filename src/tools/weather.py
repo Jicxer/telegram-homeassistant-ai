@@ -28,13 +28,13 @@ def get_forecast(location: str = None, days: int = 3) -> str:
         )
         response.raise_for_status()
         data = response.json()
-        lines = [f"Forecast for {location}:"]
+        lines = [f"*Forecast for {location}*"]
         for day in data["weather"][:days]:
             date = datetime.strptime(day["date"], "%Y-%m-%d").strftime("%a %b %d")
             high = day["maxtempF"]
             low = day["mintempF"]
             desc = day["hourly"][4]["weatherDesc"][0]["value"]
-            lines.append(f"{date}: {desc}, High {high}F / Low {low}F")
+            lines.append(f"\n*{date}*\n{desc}\nHigh {high}F  |  Low {low}F")
         return "\n".join(lines)
     except requests.RequestException as e:
         return f"Could not fetch forecast: {e}"

@@ -191,7 +191,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "content": reply
     })
 
-    await update.message.reply_text(reply)
+    await update.message.reply_text(reply, parse_mode="Markdown")
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("wake", wake_command))
