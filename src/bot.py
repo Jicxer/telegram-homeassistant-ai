@@ -1,10 +1,11 @@
 import os
 import logging
+import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 from tools.plug import turn_on, turn_off, get_status, get_power
-from tools.power import shutdown, reboot
+from tools.power import shutdown, reboot, monitor_shutdown
 import ollama
 from tools.wol import wake_desktop
 
@@ -94,10 +95,20 @@ async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         await update.message.reply_text("Usage: /shutdown <machine> [now|+minutes|HH:MM]")
         return
-    machine = context.args[0].lower()
+    machine_name = context.args[0].lower()
     when = context.args[1] if len(context.args) > 1 else "now"
-    result = shutdown(machine, when)
-    await update.message.reply_text(result)
+    success, message = shutdown(machine_name, when)
+    await update.message.reply_text(message)
+
+    if success:
+        from tools.machines import get_machine
+        machine = get_machine(machine_name)
+        if machine:
+            async def notify(msg):
+                await update.message.reply_text(msg)
+            asyncio.create_task(
+                monitor_shutdown(machine["host"], machine_name, notify)
+            )
 
 async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
@@ -121,7 +132,7 @@ async def machines_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = []
     for name in sorted(machines):
-        tag = " 🔒 protected" if is_protected(name) else ""
+        tag = "  protected" if is_protected(name) else ""
         lines.append(f"• {name}{tag}")
     await update.message.reply_text("*Configured machines:*\n" + "\n".join(lines), parse_mode="Markdown")
     
