@@ -46,8 +46,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /plug power — Get plug power consumption
 
 *Shutdown/Reboot*
-/shutdown <machine> [now|+10|23:00] — Shutdown a machine
+/shutdown <machine> [now | +10 | 23:00] — Shutdown a machine now, in 10 minutes, or at 23:00
 /reboot <machine> — Reboot a machine
+
+*Machines*
+/machines — List all configured machines
 
 *Help*
 /help — Show this message
@@ -107,6 +110,21 @@ async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = reboot(machine)
     await update.message.reply_text(result)
 
+async def machines_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+    from tools.machines import list_machines, is_protected
+    machines = list_machines()
+    if not machines:
+        await update.message.reply_text("No machines configured.")
+        return
+    lines = []
+    for name in sorted(machines):
+        tag = " 🔒 protected" if is_protected(name) else ""
+        lines.append(f"• {name}{tag}")
+    await update.message.reply_text("*Configured machines:*\n" + "\n".join(lines), parse_mode="Markdown")
+    
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -145,6 +163,7 @@ app.add_handler(CommandHandler("help", help_command))
 app.add_handler(CommandHandler("plug", plug_command))
 app.add_handler(CommandHandler("shutdown", shutdown_command))
 app.add_handler(CommandHandler("reboot", reboot_command))
+app.add_handler(CommandHandler("machines", machines_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
