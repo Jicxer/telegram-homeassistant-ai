@@ -1,4 +1,4 @@
-# home-ai-companion
+# telegram-homeassistant-ai
 
 A self-hosted home automation AI companion. Send natural language commands via Telegram, get responses from a locally running LLM, and control smart home devices — all on your own hardware with no cloud dependency and no ongoing API costs.
 
