@@ -127,15 +127,17 @@ Copy `.env.example` to `.env` and fill in your values. Never commit `.env` to gi
 ### Phase 1 — tool calling
 - [x] Telegram bot connected to local LLM
 - [x] Conversation memory within session
+- [x] Wake-on-LAN support
+- [ ] /shutdown and /reboot command tools
 - [ ] Shelly smart plug control
 - [ ] Weather tool (wttr.in)
-- [ ] Proper tool-calling agent architecture
+- [ ] Core tools
 
 ### Phase 2 — agent behaviour
 - [ ] Persistent memory across restarts
 - [ ] Scheduled automations ("turn off plug at midnight")
 - [ ] Machine health monitoring ("how hot is the CPU?")
-- [ ] Wake-on-LAN support
+- [ ] LLM API fallback for unknown queries
 
 ### Phase 3 — knowledge & RAG
 - [ ] Local document ingestion (PDF, markdown, txt)
