@@ -224,19 +224,22 @@ async def ha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = ha_list_devices()
     elif action == "on":
         if len(context.args) < 2:
-            result = "Specify entity: /ha on switch.living_room"
+            result = "Specify entity: /ha on Bedroom Lamp"
         else:
-            result = ha_turn_on(context.args[1])
+            name = " ".join(context.args[1:])
+            result = ha_turn_on(name)
     elif action == "off":
         if len(context.args) < 2:
-            result = "Specify entity: /ha off switch.living_room"
+            result = "Specify entity: /ha off Bedroom Lamp"
         else:
-            result = ha_turn_off(context.args[1])
+            name = " ".join(context.args[1:])
+            result = ha_turn_off(name)
     elif action == "toggle":
         if len(context.args) < 2:
-            result = "Specify entity: /ha toggle switch.living_room"
+            result = "Specify entity: /ha toggle Bedroom Lamp"
         else:
-            result = ha_toggle(context.args[1])
+            name = " ".join(context.args[1:])
+            result = ha_toggle(name)
     elif action == "alloff":
         result = ha_all_off()
     else:
