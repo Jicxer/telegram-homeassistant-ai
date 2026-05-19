@@ -115,21 +115,44 @@ def list_devices() -> str:
 # ---------------------------------------------------------------------------
 # Turn on / off / toggle
 # ---------------------------------------------------------------------------
+def _resolve_entity(name_or_id: str) -> str | None:
+    """Resolve a friendly name or partial match to an entity_id."""
+    # Already a valid entity_id format
+    if "." in name_or_id:
+        return name_or_id
+
+    # Search by friendly name
+    states = _api_get("states")
+    if not states:
+        return None
+
+    name_lower = name_or_id.lower()
+    for entity in states:
+        friendly = _friendly(entity).lower()
+        if name_lower == friendly or name_lower in friendly:
+            return entity["entity_id"]
+    return None
 
 def turn_on(entity_id: str) -> str:
     """Turn on any HA entity (switch, light, etc.)."""
-    domain = entity_id.split(".")[0]
-    result = _api_post(f"services/{domain}/turn_on", {"entity_id": entity_id})
+    resolved = _resolve_entity(entity_id)
+    if not resolved:
+        return f"Could not find device matching '{entity_id}'"
+    domain = resolved.split(".")[0]
+    result = _api_post(f"services/{domain}/turn_on", {"entity_id": resolved})
     if result is None:
-        return f"Failed to turn on {entity_id}"
-    state = _api_get(f"states/{entity_id}")
-    name = _friendly(state) if state else entity_id
+        return f"Failed to turn on {resolved}"
+    state = _api_get(f"states/{resolved}")
+    name = _friendly(state) if state else resolved
     return f"Turned on {name}"
 
 
 def turn_off(entity_id: str) -> str:
     """Turn off any HA entity."""
-    domain = entity_id.split(".")[0]
+    resolved = _resolve_entity(entity_id)
+    if not resolved:
+        return f"Could not find device matching '{entity_id}'"
+    domain = resolved.split(".")[0]
     result = _api_post(f"services/{domain}/turn_off", {"entity_id": entity_id})
     if result is None:
         return f"Failed to turn off {entity_id}"
