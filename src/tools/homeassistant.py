@@ -20,6 +20,36 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
+# Entity IDs containing any of these substrings are hidden from output.
+# They're config/diagnostic entities, not things you'd toggle day-to-day.
+HIDDEN_KEYWORDS = [
+    "child_lock",
+    "random_on_off",
+    "charge_energy",
+    "energy_total",
+    "firmware",
+    "restart",
+    "rssi",
+    "uptime",
+    "update.",
+]
+
+
+def _is_hidden(entity_id: str) -> bool:
+    """Return True if the entity should be hidden from user-facing output."""
+    eid_lower = entity_id.lower()
+    return any(kw in eid_lower for kw in HIDDEN_KEYWORDS)
+
+
+def _friendly(entity: dict) -> str:
+    """Get the friendly name, falling back to a cleaned entity_id."""
+    name = entity.get("attributes", {}).get("friendly_name", "")
+    if not name or name == entity["entity_id"]:
+        # Clean up raw entity_id: switch.bedroom_lamp_socket_1 -> Bedroom Lamp Socket 1
+        raw = entity["entity_id"].split(".", 1)[-1]
+        name = raw.replace("_", " ").title()
+    return name
+
 
 def _api_get(endpoint: str) -> dict | list | None:
     """GET request to HA API."""
@@ -42,7 +72,6 @@ def _api_post(endpoint: str, payload: dict = None) -> dict | list | None:
             timeout=10,
         )
         r.raise_for_status()
-        # Some HA endpoints return empty 200
         return r.json() if r.text else {"status": "ok"}
     except requests.RequestException as e:
         logger.error(f"HA API POST error: {e}")
@@ -54,22 +83,26 @@ def _api_post(endpoint: str, payload: dict = None) -> dict | list | None:
 # ---------------------------------------------------------------------------
 
 def list_devices() -> str:
-    """List all HA entities grouped by domain (switch, light, etc.)."""
+    """List all HA entities grouped by domain, with entity_id for commands."""
     states = _api_get("states")
     if not states:
         return "Failed to connect to Home Assistant."
 
-    # Group by domain
+    relevant = ["switch", "light", "cover", "fan", "climate", "media_player", "lock"]
     grouped: dict[str, list[str]] = {}
+
     for entity in states:
         entity_id = entity["entity_id"]
         domain = entity_id.split(".")[0]
-        friendly = entity["attributes"].get("friendly_name", entity_id)
+        if domain not in relevant or _is_hidden(entity_id):
+            continue
+        name = _friendly(entity)
         state = entity["state"]
-        grouped.setdefault(domain, []).append(f"  {friendly} ({entity_id}) — {state}")
+        icon = "on" if state == "on" else "off"
+        grouped.setdefault(domain, []).append(
+            f"  [{icon}] {name}\n       /ha toggle {entity_id}"
+        )
 
-    # Only show actionable domains
-    relevant = ["switch", "light", "cover", "fan", "climate", "media_player", "lock"]
     lines = []
     for domain in relevant:
         if domain in grouped:
@@ -87,27 +120,36 @@ def turn_on(entity_id: str) -> str:
     """Turn on any HA entity (switch, light, etc.)."""
     domain = entity_id.split(".")[0]
     result = _api_post(f"services/{domain}/turn_on", {"entity_id": entity_id})
-    if result is not None:
-        return f"Turned on {entity_id}"
-    return f"Failed to turn on {entity_id}"
+    if result is None:
+        return f"Failed to turn on {entity_id}"
+    state = _api_get(f"states/{entity_id}")
+    name = _friendly(state) if state else entity_id
+    return f"Turned on {name}"
 
 
 def turn_off(entity_id: str) -> str:
     """Turn off any HA entity."""
     domain = entity_id.split(".")[0]
     result = _api_post(f"services/{domain}/turn_off", {"entity_id": entity_id})
-    if result is not None:
-        return f"Turned off {entity_id}"
-    return f"Failed to turn off {entity_id}"
+    if result is None:
+        return f"Failed to turn off {entity_id}"
+    state = _api_get(f"states/{entity_id}")
+    name = _friendly(state) if state else entity_id
+    return f"Turned off {name}"
 
 
 def toggle(entity_id: str) -> str:
     """Toggle any HA entity."""
     domain = entity_id.split(".")[0]
     result = _api_post(f"services/{domain}/toggle", {"entity_id": entity_id})
-    if result is not None:
-        return f"Toggled {entity_id}"
-    return f"Failed to toggle {entity_id}"
+    if result is None:
+        return f"Failed to toggle {entity_id}"
+    state = _api_get(f"states/{entity_id}")
+    if state:
+        name = _friendly(state)
+        new_state = state["state"]
+        return f"{name} is now {new_state}"
+    return f"Toggled {entity_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -120,10 +162,9 @@ def get_state(entity_id: str) -> str:
     if not state:
         return f"Could not get state for {entity_id}"
 
-    friendly = state["attributes"].get("friendly_name", entity_id)
+    name = _friendly(state)
     current = state["state"]
 
-    # Include useful attributes
     attrs = state.get("attributes", {})
     extras = []
     if "current_power_w" in attrs:
@@ -133,33 +174,50 @@ def get_state(entity_id: str) -> str:
     if "voltage" in attrs:
         extras.append(f"Voltage: {attrs['voltage']}V")
     if "temperature" in attrs:
-        extras.append(f"Temp: {attrs['temperature']}°")
+        extras.append(f"Temp: {attrs['temperature']}deg")
     if "brightness" in attrs:
         extras.append(f"Brightness: {round(attrs['brightness'] / 255 * 100)}%")
 
     extra_str = f" ({', '.join(extras)})" if extras else ""
-    return f"{friendly}: {current}{extra_str}"
+    return f"{name}: {current}{extra_str}"
 
 
 def get_all_states() -> str:
-    """Get states of all controllable entities."""
+    """Get states of all controllable entities, cleanly formatted."""
     states = _api_get("states")
     if not states:
         return "Failed to connect to Home Assistant."
 
     relevant = ["switch", "light", "cover", "fan", "climate", "media_player", "lock"]
-    lines = []
+    on_devices = []
+    off_devices = []
+
     for entity in states:
-        domain = entity["entity_id"].split(".")[0]
-        if domain in relevant:
-            friendly = entity["attributes"].get("friendly_name", entity["entity_id"])
-            lines.append(f"{friendly}: {entity['state']}")
+        eid = entity["entity_id"]
+        domain = eid.split(".")[0]
+        if domain not in relevant or _is_hidden(eid):
+            continue
+        name = _friendly(entity)
+        if entity["state"] == "on":
+            on_devices.append(f"  [on]  {name}")
+        else:
+            off_devices.append(f"  [off] {name}")
+
+    lines = []
+    if on_devices:
+        lines.append("ON:")
+        lines.extend(on_devices)
+    if off_devices:
+        if on_devices:
+            lines.append("")
+        lines.append("OFF:")
+        lines.extend(off_devices)
 
     return "\n".join(lines) if lines else "No controllable devices found."
 
 
 # ---------------------------------------------------------------------------
-# Convenience wrappers for common commands
+# Convenience wrappers
 # ---------------------------------------------------------------------------
 
 def all_off() -> str:
@@ -172,13 +230,12 @@ def all_off() -> str:
     for entity in states:
         eid = entity["entity_id"]
         domain = eid.split(".")[0]
-        if domain in ["switch", "light"] and entity["state"] == "on":
+        if domain in ["switch", "light"] and entity["state"] == "on" and not _is_hidden(eid):
             turn_off(eid)
-            friendly = entity["attributes"].get("friendly_name", eid)
-            turned_off.append(friendly)
+            turned_off.append(_friendly(entity))
 
     if turned_off:
-        return f"Turned off: {', '.join(turned_off)}"
+        return "Turned off:\n" + "\n".join(f"  - {name}" for name in turned_off)
     return "Everything is already off."
 
 
@@ -190,7 +247,6 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    # Reinitialize after loading env
     HA_TOKEN = os.getenv("HA_TOKEN", "")
     HEADERS["Authorization"] = f"Bearer {HA_TOKEN}"
 
