@@ -117,21 +117,33 @@ def list_devices() -> str:
 # ---------------------------------------------------------------------------
 def _resolve_entity(name_or_id: str) -> str | None:
     """Resolve a friendly name or partial match to an entity_id."""
-    # Already a valid entity_id format
     if "." in name_or_id:
         return name_or_id
 
-    # Search by friendly name
     states = _api_get("states")
     if not states:
         return None
 
     name_lower = name_or_id.lower()
+
+    # First pass: exact match
     for entity in states:
+        if _is_hidden(entity["entity_id"]):
+            continue
         friendly = _friendly(entity).lower()
-        if name_lower == friendly or name_lower in friendly:
+        if name_lower == friendly:
             return entity["entity_id"]
+
+    # Second pass: partial match
+    for entity in states:
+        if _is_hidden(entity["entity_id"]):
+            continue
+        friendly = _friendly(entity).lower()
+        if name_lower in friendly:
+            return entity["entity_id"]
+
     return None
+
 
 def turn_on(entity_id: str) -> str:
     """Turn on any HA entity (switch, light, etc.)."""

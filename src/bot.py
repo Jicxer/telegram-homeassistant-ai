@@ -235,7 +235,7 @@ async def ha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name = " ".join(context.args[1:])
             result = ha_turn_off(name)
     elif action == "toggle":
-        if len(context.args) < 2:
+        if len(context.args) < 2:   
             result = "Specify entity: /ha toggle Bedroom Lamp"
         else:
             name = " ".join(context.args[1:])
