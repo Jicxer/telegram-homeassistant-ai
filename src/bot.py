@@ -7,6 +7,10 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 from tools.plug import turn_on, turn_off, get_status, get_power
 from tools.power import shutdown, reboot, monitor_shutdown
 from tools.weather import get_weather, get_forecast
+from tools.homeassistant import (
+    list_devices, turn_on, turn_off, toggle,
+    get_state, get_all_states, all_off
+)
 import ollama
 from tools.wol import wake_desktop
 
@@ -53,6 +57,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 *Weather* - Defaults to location defined in configuration
 /weather [location] — Current conditions
 /forecast [location] [1-3] — Multi-day forecast
+
+*Home Assistant*
+/ha status — show all device states
+/ha devices — list all controllable devices
+/ha on <entity_id> — turn on
+/ha off <entity_id> — turn off  
+/ha toggle <entity_id> — toggle
+/ha alloff — turn everything off
 
 *Help*
 /help — Show this message
@@ -160,7 +172,13 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             location = " ".join(context.args)
     result = get_forecast(location, days)
     await update.message.reply_text(result, parse_mode="HTML")
-    
+
+# /ha status — show all device states
+# /ha devices — list all controllable devices
+# /ha on <entity_id> — turn on
+# /ha off <entity_id> — turn off  
+# /ha toggle <entity_id> — toggle
+# /ha alloff — turn everything off
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
