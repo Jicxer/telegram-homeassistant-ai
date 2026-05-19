@@ -101,7 +101,7 @@ async def routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(result)
         return
 
-    name = context.args[0].lower()
+    name = " ".join(context.args)
     result = ha_run_routine(name)
     await update.message.reply_text(result)
 

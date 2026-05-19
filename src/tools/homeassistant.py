@@ -200,7 +200,11 @@ def toggle(entity_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-ROUTINES = {
+# ---------------------------------------------------------------------------
+# Routine aliases — optional shortcuts for common routines
+# ---------------------------------------------------------------------------
+
+ROUTINE_ALIASES = {
     "wakeup": "automation.good_morning",
     "winddown": "automation.wind_down",
     "lightsout": "automation.goodnight",
@@ -209,32 +213,70 @@ ROUTINES = {
 }
 
 
+def _resolve_automation(name: str) -> str | None:
+    """Resolve a friendly name, alias, or partial match to an automation entity_id."""
+    if name.lower() in ROUTINE_ALIASES:
+        return ROUTINE_ALIASES[name.lower()]
+    if name.startswith("automation."):
+        return name
+    states = _api_get("states")
+    if not states:
+        return None
+
+    name_lower = name.lower()
+    automations = [s for s in states if s["entity_id"].startswith("automation.")]
+
+    # Exact match
+    for entity in automations:
+        friendly = _friendly(entity).lower()
+        if name_lower == friendly:
+            return entity["entity_id"]
+
+    # Partial match
+    for entity in automations:
+        friendly = _friendly(entity).lower()
+        if name_lower in friendly:
+            return entity["entity_id"]
+
+    return None
+
+
 def run_routine(name: str) -> str:
-    """Trigger a named routine."""
-    entity_id = ROUTINES.get(name.lower())
-    if not entity_id:
-        available = "\n".join(f"  {k}" for k in ROUTINES)
-        return f"Unknown routine '{name}'. Available:\n{available}"
-    result = _api_post("services/automation/trigger", {"entity_id": entity_id})
-    if result is not None:
-        return f"Triggered {name}"
-    return f"Failed to trigger {name}"
+    """Trigger a routine by alias, friendly name, or partial match."""
+    resolved = _resolve_automation(name)
+    if not resolved:
+        return f"Could not find routine matching '{name}'. Use /routine to see available."
+    result = _api_post("services/automation/trigger", {"entity_id": resolved})
+    if result is None:
+        return f"Failed to trigger routine"
+    state = _api_get(f"states/{resolved}")
+    friendly = _friendly(state) if state else resolved
+    return f"Triggered {friendly}"
 
 
 def list_routines() -> str:
-    """List all available routines with their status."""
+    """List all HA automations, with aliases noted."""
     states = _api_get("states")
     if not states:
         return "Failed to connect to Home Assistant."
 
-    state_map = {s["entity_id"]: s["state"] for s in states}
+    # Reverse alias map for display
+    alias_lookup = {v: k for k, v in ROUTINE_ALIASES.items()}
+
     lines = []
-    for alias, entity_id in ROUTINES.items():
-        status = state_map.get(entity_id, "unknown")
-        lines.append(f"  /routine {alias} — {status}")
+    for entity in states:
+        eid = entity["entity_id"]
+        if not eid.startswith("automation."):
+            continue
+        name = _friendly(entity)
+        status = entity["state"]
+        alias = alias_lookup.get(eid)
+        if alias:
+            lines.append(f"  [{status}] {name}\n       /routine {alias}")
+        else:
+            lines.append(f"  [{status}] {name}\n       /routine {name}")
 
-    return "Available routines:\n" + "\n".join(lines)
-
+    return "Routines:\n" + "\n".join(lines) if lines else "No automations found."
 # ---------------------------------------------------------------------------
 # State queries
 # ---------------------------------------------------------------------------
