@@ -122,10 +122,24 @@ async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from tools.machines import get_machine
         machine = get_machine(machine_name)
         if machine:
+            # Calculate delay before pinging
+            delay = 10  # default for "now"
+            if when.startswith("+"):
+                delay = int(when[1:]) * 60  # +30 = wait 30 minutes
+            elif ":" in when:
+                from datetime import datetime
+                now = datetime.now()
+                target = datetime.strptime(when, "%H:%M").replace(
+                    year=now.year, month=now.month, day=now.day
+                )
+                if target < now:
+                    target = target.replace(day=now.day + 1)
+                delay = int((target - now).total_seconds())
+
             async def notify(msg):
                 await update.message.reply_text(msg)
             asyncio.create_task(
-                monitor_shutdown(machine["host"], machine_name, notify)
+                monitor_shutdown(machine["host"], machine_name, notify, delay)
             )
 
 async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

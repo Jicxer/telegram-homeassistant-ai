@@ -17,16 +17,16 @@ def _ping(host: str) -> bool:
     except Exception:
         return False
 
-async def monitor_shutdown(host: str, machine_name: str, callback):
+async def monitor_shutdown(host: str, machine_name: str, callback, delay_seconds: int = 10):
     """Ping machine until it goes offline then call callback."""
-    await asyncio.sleep(10)  # give it time to start shutting down
+    await asyncio.sleep(delay_seconds)
     for _ in range(20):      # try for ~10 minutes max
         if not _ping(host):
-            await callback(f"✅ {machine_name.capitalize()} is now offline.")
+            await callback(f"{machine_name.capitalize()} is now offline.")
             return
         await asyncio.sleep(30)
-    await callback(f"⚠️ {machine_name.capitalize()} did not go offline after 10 minutes. Check manually.")
-    
+    await callback(f"{machine_name.capitalize()} did not go offline after 10 minutes. Check manually.")
+
 def _ssh(host: str, user: str, command: str) -> tuple[bool, str]:
     """Run a command on a remote machine via SSH."""
     try:
