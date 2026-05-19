@@ -43,40 +43,41 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Unauthorized.")
         return
     help_text = """
-🤖 *Home AI Commands*
+    <b>Home AI Commands</b>
 
-*Power*
-/wake — Wake up the desktop
-/shutdown <machine> [now | +10 | 23:00] — Shutdown a machine now, in 10 minutes, or at 23:00
-/reboot <machine> — Reboot a machine
+    <b>Power</b>
+    /wake — Wake up the desktop
+    /shutdown machine [now|+10|23:00] — Shutdown a machine
+    /reboot machine — Reboot a machine
 
-*Smart Plug*
-/plug on — Turn plug on
-/plug off — Turn plug off
-/plug status — Check plug state
-/plug power — Get plug power consumption
+    <b>Smart Plug</b>
+    /plug on — Turn plug on
+    /plug off — Turn plug off
+    /plug status — Check plug state
+    /plug power — Get plug power consumption
 
-*Machines*
-/machines — List all configured machines
+    <b>Machines</b>
+    /machines — List all configured machines
 
-*Weather* - Defaults to location defined in configuration
-/weather [location] — Current conditions
-/forecast [location] [1-3] — Multi-day forecast
+    <b>Weather</b>
+    /weather [location] — Current conditions
+    /forecast [location] [1-3] — Multi-day forecast
 
-*Home Assistant*
-/ha status — show all device states
-/ha devices — list all controllable devices
-/ha on <entity_id> — turn on
-/ha off <entity_id> — turn off  
-/ha toggle <entity_id> — toggle
-/ha alloff — turn everything off
+    <b>Home Assistant</b>
+    /ha status — Show all HA device states
+    /ha devices — List controllable devices
+    /ha on entity_id — Turn on a device
+    /ha off entity_id — Turn off a device
+    /ha toggle entity_id — Toggle a device
+    /ha alloff — Turn everything off
 
-*Help*
-/help — Show this message
+    <b>Help</b>
+    /help — Show this message
 
-💬 You can also just chat naturally for questions and home automation help.
-"""
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    You can also just chat naturally for questions and home automation help.
+    """
+    await update.message.reply_text(help_text, parse_mode="HTML")
+
 
 async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
