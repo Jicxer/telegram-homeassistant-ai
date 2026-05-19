@@ -195,16 +195,59 @@ def toggle(entity_id: str) -> str:
         return f"{name} is now {new_state}"
     return f"Toggled {entity_id}"
 
+# ---------------------------------------------------------------------------
+# Routine aliases — maps friendly names to HA automation entity IDs
+# ---------------------------------------------------------------------------
+
+
+ROUTINES = {
+    "wakeup": "automation.good_morning",
+    "winddown": "automation.wind_down",
+    "lightsout": "automation.goodnight",
+    "leaving": "automation.leave_home",
+    "latenight": "automation.late_night_auto_off",
+}
+
+
+def run_routine(name: str) -> str:
+    """Trigger a named routine."""
+    entity_id = ROUTINES.get(name.lower())
+    if not entity_id:
+        available = "\n".join(f"  {k}" for k in ROUTINES)
+        return f"Unknown routine '{name}'. Available:\n{available}"
+    result = _api_post("services/automation/trigger", {"entity_id": entity_id})
+    if result is not None:
+        return f"Triggered {name}"
+    return f"Failed to trigger {name}"
+
+
+def list_routines() -> str:
+    """List all available routines with their status."""
+    states = _api_get("states")
+    if not states:
+        return "Failed to connect to Home Assistant."
+
+    state_map = {s["entity_id"]: s["state"] for s in states}
+    lines = []
+    for alias, entity_id in ROUTINES.items():
+        status = state_map.get(entity_id, "unknown")
+        lines.append(f"  /routine {alias} — {status}")
+
+    return "Available routines:\n" + "\n".join(lines)
 
 # ---------------------------------------------------------------------------
 # State queries
 # ---------------------------------------------------------------------------
 
+
 def get_state(entity_id: str) -> str:
     """Get current state of a specific entity."""
-    state = _api_get(f"states/{entity_id}")
+    resolved = _resolve_entity(entity_id)
+    if not resolved:
+        return f"Could not find device matching '{entity_id}'"
+    state = _api_get(f"states/{resolved}")
     if not state:
-        return f"Could not get state for {entity_id}"
+        return f"Could not get state for {resolved}"
 
     name = _friendly(state)
     current = state["state"]

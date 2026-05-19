@@ -14,7 +14,9 @@ from tools.homeassistant import (
     toggle as ha_toggle,
     get_state as ha_get_state,
     get_all_states as ha_get_all_states,
-    all_off as ha_all_off
+    all_off as ha_all_off,
+    run_routine as ha_run_routine,
+    list_routines as ha_list_routines
 )
 import ollama
 from tools.wol import wake_desktop
@@ -36,8 +38,11 @@ Be concise and helpful. If you are unsure about something, say so honestly."""
 conversation_history = {}
 MAX_HISTORY = 20
 
+
 def is_authorized(user_id: int) -> bool:
     return user_id == ALLOWED_USER_ID
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -70,6 +75,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /ha off entity_id — Turn off a device
     /ha toggle entity_id — Toggle a device
     /ha alloff — Turn everything off
+    
+    Routines
+    /routine — List all routines
+    /routine wakeup — Turn on main lamp
+    /routine winddown — Main lamp off, bedroom lamp on
+    /routine lightsout — All lamps off
+    /routine leaving — All lamps off (except server)
 
     <b>Help</b>
     /help — Show this message
@@ -77,6 +89,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     You can also just chat naturally for questions and home automation help.
     """
     await update.message.reply_text(help_text, parse_mode="HTML")
+
+
+async def routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    if not context.args:
+        result = ha_list_routines()
+        await update.message.reply_text(result)
+        return
+
+    name = context.args[0].lower()
+    result = ha_run_routine(name)
+    await update.message.reply_text(result)
 
 
 async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,6 +126,7 @@ async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = "Unknown action. Use: on, off, status, power"
     await update.message.reply_text(result)
 
+
 async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -106,6 +134,7 @@ async def wake_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sending wake signal to desktop...")
     result = wake_desktop()
     await update.message.reply_text(result)
+
 
 async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
@@ -143,6 +172,7 @@ async def shutdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 monitor_shutdown(machine["host"], machine_name, notify, delay)
             )
 
+
 async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -153,6 +183,7 @@ async def reboot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     machine = context.args[0].lower()
     result = reboot(machine)
     await update.message.reply_text(result)
+
 
 async def machines_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
@@ -169,6 +200,7 @@ async def machines_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"• {name}{tag}")
     await update.message.reply_text("*Configured machines:*\n" + "\n".join(lines), parse_mode="Markdown")
 
+
 async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -176,6 +208,7 @@ async def weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     location = " ".join(context.args) if context.args else None
     result = get_weather(location)
     await update.message.reply_text(result)
+
 
 async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
@@ -199,6 +232,8 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /ha off <entity_id> — turn off  
 # /ha toggle <entity_id> — toggle
 # /ha alloff — turn everything off
+
+
 async def ha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -247,6 +282,7 @@ async def ha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(result)
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -289,6 +325,7 @@ app.add_handler(CommandHandler("machines", machines_command))
 app.add_handler(CommandHandler("weather", weather_command))
 app.add_handler(CommandHandler("forecast", forecast_command))
 app.add_handler(CommandHandler("ha", ha_command))
+app.add_handler(CommandHandler("routine", routine_command))
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
