@@ -32,6 +32,12 @@ HIDDEN_KEYWORDS = [
     "rssi",
     "uptime",
     "update.",
+    "power_on_behavior",
+    "select.",
+    "number.",
+    "sensor.",
+    "binary_sensor.",
+    "button.",
 ]
 
 
