@@ -4,12 +4,17 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from tools.plug import turn_on, turn_off, get_status, get_power
 from tools.power import shutdown, reboot, monitor_shutdown
 from tools.weather import get_weather, get_forecast
+from tools.plug import turn_on as plug_on, turn_off as plug_off, get_status, get_power
 from tools.homeassistant import (
-    list_devices, turn_on, turn_off, toggle,
-    get_state, get_all_states, all_off
+    list_devices as ha_list_devices,
+    turn_on as ha_turn_on,
+    turn_off as ha_turn_off,
+    toggle as ha_toggle,
+    get_state as ha_get_state,
+    get_all_states as ha_get_all_states,
+    all_off as ha_all_off
 )
 import ollama
 from tools.wol import wake_desktop
@@ -82,9 +87,9 @@ async def plug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     action = context.args[0].lower()
     if action == "on":
-        result = turn_on()
+        result = plug_on()
     elif action == "off":
-        result = turn_off()
+        result = plug_off()
     elif action == "status":
         result = get_status()
     elif action == "power":
@@ -179,6 +184,51 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /ha off <entity_id> — turn off  
 # /ha toggle <entity_id> — toggle
 # /ha alloff — turn everything off
+async def ha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage:\n"
+            "/ha status — all device states\n"
+            "/ha devices — list controllable devices\n"
+            "/ha on <entity_id> — turn on\n"
+            "/ha off <entity_id> — turn off\n"
+            "/ha toggle <entity_id> — toggle\n"
+            "/ha alloff — turn everything off"
+        )
+        return
+
+    action = context.args[0].lower()
+
+    if action == "status":
+        result = ha_get_all_states()
+    elif action == "devices":
+        result = ha_list_devices()
+    elif action == "on":
+        if len(context.args) < 2:
+            result = "Specify entity: /ha on switch.living_room"
+        else:
+            result = ha_turn_on(context.args[1])
+    elif action == "off":
+        if len(context.args) < 2:
+            result = "Specify entity: /ha off switch.living_room"
+        else:
+            result = ha_turn_off(context.args[1])
+    elif action == "toggle":
+        if len(context.args) < 2:
+            result = "Specify entity: /ha toggle switch.living_room"
+        else:
+            result = ha_toggle(context.args[1])
+    elif action == "alloff":
+        result = ha_all_off()
+    else:
+        result = "Unknown action. Use: status, devices, on, off, toggle, alloff"
+
+    await update.message.reply_text(result)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         await update.message.reply_text("Unauthorized.")
@@ -220,6 +270,8 @@ app.add_handler(CommandHandler("reboot", reboot_command))
 app.add_handler(CommandHandler("machines", machines_command))
 app.add_handler(CommandHandler("weather", weather_command))
 app.add_handler(CommandHandler("forecast", forecast_command))
+app.add_handler(CommandHandler("ha", ha_command))
+
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 print("Bot is running...")
