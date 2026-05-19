@@ -171,21 +171,24 @@ def turn_off(entity_id: str) -> str:
     if not resolved:
         return f"Could not find device matching '{entity_id}'"
     domain = resolved.split(".")[0]
-    result = _api_post(f"services/{domain}/turn_off", {"entity_id": entity_id})
+    result = _api_post(f"services/{domain}/turn_off", {"entity_id": resolved})
     if result is None:
-        return f"Failed to turn off {entity_id}"
-    state = _api_get(f"states/{entity_id}")
-    name = _friendly(state) if state else entity_id
+        return f"Failed to turn off {resolved}"
+    state = _api_get(f"states/{resolved}")
+    name = _friendly(state) if state else resolved
     return f"Turned off {name}"
 
 
 def toggle(entity_id: str) -> str:
     """Toggle any HA entity."""
-    domain = entity_id.split(".")[0]
-    result = _api_post(f"services/{domain}/toggle", {"entity_id": entity_id})
+    resolved = _resolve_entity(entity_id)
+    if not resolved:
+        return f"Could not find device matching '{entity_id}'"
+    domain = resolved.split(".")[0]
+    result = _api_post(f"services/{domain}/toggle", {"entity_id": resolved})
     if result is None:
-        return f"Failed to toggle {entity_id}"
-    state = _api_get(f"states/{entity_id}")
+        return f"Failed to toggle {resolved}"
+    state = _api_get(f"states/{resolved}")
     if state:
         name = _friendly(state)
         new_state = state["state"]
