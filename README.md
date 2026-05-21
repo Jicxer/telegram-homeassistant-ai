@@ -1,52 +1,77 @@
 # telegram-homeassistant-ai
 
-A self-hosted home automation AI companion. Send natural language commands via Telegram, get responses from a locally running LLM, and control smart home devices through Home Assistant — all on your own hardware with no cloud dependency and no ongoing API costs.
+A self-hosted home automation AI companion. Send natural language commands via Telegram, get responses from a locally running LLM, and control smart home devices — all on your own hardware with no cloud dependency and no ongoing API costs.
 
 ## What it does
 
 - Chat with a local LLM via Telegram from anywhere
-- Control smart plugs and lights with `/ha` commands (natural language routing planned)
-- Trigger automation routines (wake up, wind down, lights out) via `/routine`
-- Wake, shutdown, and reboot machines remotely
-- Monitor smart plug power consumption and energy usage
-- Home Assistant manages all device state centrally — bot talks to HA's REST API
-- Scheduled automations run inside HA independently of the bot (survives bot crashes)
-- Geofence-triggered routines via HA Companion app (leaving/arriving home)
+- Control smart home devices with natural language (via HA Ollama conversation agent)
+- Run routines and automations through Telegram or geofencing triggers
+- Wake, shutdown, and reboot machines remotely via WOL and SSH
+- Monitor smart plug power consumption
+- Get AI-generated contextual messages from HA sensors (weather, device states, alerts)
+- Conversation memory within session
 - Runs 24/7 as a systemd service, restarts automatically on crash
 - Accessible remotely via Tailscale (private network) and SSH
 
 ## Architecture
 
 ```
-┌──────────────┐     Telegram API      ┌──────────────────────────────┐
-│  Your Phone  │◄─────────────────────► │  bot.py (systemd service)    │
-│  (Telegram)  │                        │  ├── Ollama (Mistral 7B)     │
-│              │                        │  ├── tools/homeassistant.py  │
-│  HA Companion│──── location updates──►│  ├── tools/wol.py            │
-│  App (iOS)   │                        │  ├── tools/power.py          │
-└──────────────┘                        │  └── tools/weather.py        │
-                                        └──────────┬───────────────────┘
-                                                   │ REST API (port 8123)
-                                        ┌──────────▼───────────────────┐
-                                        │  Home Assistant (Docker)      │
-                                        │  ├── Local Tuya (Nous A9 x3) │
-                                        │  ├── Shelly (auto-discovered) │
-                                        │  ├── Automations (5 built-in) │
-                                        │  └── Zones + Geofencing       │
-                                        └──────────────────────────────┘
+┌─────────────┐
+│   iPhone     │
+│  Telegram    │
+│  HA Companion│
+└──────┬───────┘
+       │ Tailscale / LAN
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  IBuyPower Laptop (Ubuntu 24.04 headless)                    │
+│                                                              │
+│  ┌──────────┐    ┌──────────┐    ┌──────────────────────┐   │
+│  │  bot.py   │───▶│  Ollama  │───▶│  Tool Functions      │   │
+│  │ (systemd) │    │ (Mistral)│    │  homeassistant.py    │   │
+│  │           │    │          │    │  weather.py          │   │
+│  │ Telegram  │    │          │    │  power.py / wol.py   │   │
+│  │ polling   │    │          │    │  system.py           │   │
+│  └──────────┘    └────┬─────┘    └──────────┬───────────┘   │
+│                       │                      │               │
+│              ┌────────▼──────────────────────▼────────┐      │
+│              │  Home Assistant (Docker)                │      │
+│              │                                        │      │
+│              │  ┌────────────────────────────────┐    │      │
+│              │  │  Ollama Conversation Agent      │    │      │
+│              │  │  (Assist API + Tool Calling)    │    │      │
+│              │  └────────────────────────────────┘    │      │
+│              │                                        │      │
+│              │  Telegram Bot (broadcast mode)         │      │
+│              │  Local Tuya  ──▶ Nous A9 plugs × 3    │      │
+│              │  Shelly      ──▶ Shelly Gen2 plug     │      │
+│              │  Geofencing  ──▶ HA Companion app     │      │
+│              │  Automations ──▶ routines, alerts      │      │
+│              └────────────────────────────────────────┘      │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────┐
+│  RPI5 (LAN)  │
+│  WOL relay   │
+│  Pihole      │
+│  Immich       │
+│  RustDesk    │
+└──────────────┘
 ```
-
-All services run on a single repurposed IBuyPower laptop (Ryzen 7 3700X, RTX 2070, 16GB RAM, Ubuntu 24.04 headless). An RPI5 on the same LAN handles WOL relay, Pihole, Immich, and RustDesk.
 
 ## Stack
 
 | Component | Technology |
 |-----------|------------|
 | LLM runtime | [Ollama](https://ollama.com) |
-| Model | Mistral 7B (quantized) |
+| Model | Mistral 7B v0.3 (quantized, function calling) |
 | Bot interface | python-telegram-bot |
-| Device hub | [Home Assistant](https://www.home-assistant.io/) (Docker container) |
-| Smart plugs | Nous A9 × 3 (via HA Local Tuya) + Shelly Gen2 (via HA Shelly integration) |
+| Device hub | [Home Assistant](https://www.home-assistant.io/) (Docker) |
+| NLP device control | HA Ollama conversation agent (Assist API) |
+| Smart plugs | Nous A9 × 3 (via HA Local Tuya) + Shelly Gen2 (via HA Shelly) |
 | Wake-on-LAN | etherwake via RPI relay |
 | Remote access | Tailscale + SSH |
 | Geofencing | HA Companion app (iOS) |
@@ -59,7 +84,7 @@ telegram-homeassistant-ai/
 ├── src/
 │   ├── bot.py                 # Telegram bot entry point and command routing
 │   └── tools/
-│       ├── homeassistant.py   # HA REST API client — device control, routines
+│       ├── homeassistant.py   # HA REST API + conversation.process client
 │       ├── machines.py        # Machine registry loaded from environment
 │       ├── power.py           # Shutdown and reboot via SSH
 │       ├── weather.py         # Weather via wttr.in
@@ -76,27 +101,156 @@ telegram-homeassistant-ai/
 └── README.md
 ```
 
+## Bot commands
+
+### HA device control
+| Command | Description |
+|---------|-------------|
+| `/ha on <device>` | Turn on a device via HA |
+| `/ha off <device>` | Turn off a device via HA |
+| `/ha status` | List all device states |
+| `/ha status <device>` | Get specific device state |
+
+### Routines
+| Command | Description |
+|---------|-------------|
+| `/routine <name>` | Run a named HA automation |
+| `/routine list` | List available routines |
+
+Available routines: `wakeup`, `winddown`, `lightsout`, `leaving`, `latenight`
+
+### Machine control
+| Command | Description |
+|---------|-------------|
+| `/wake <machine>` | Wake a machine via WOL |
+| `/shutdown <machine>` | Shutdown a machine via SSH |
+| `/reboot <machine>` | Reboot a machine via SSH |
+
+### General
+| Command | Description |
+|---------|-------------|
+| `/weather` | Current weather and forecast |
+| `/system` | Host machine health (CPU temp, load) |
+| `/help` | List available commands |
+
+Natural language messages (not prefixed with `/`) are sent to Ollama for conversational responses and, once the Ollama HA conversation agent is configured, can route to device control through the Assist API.
+
+## Home Assistant automations
+
+| Automation | Trigger | Actions |
+|------------|---------|---------|
+| Good Morning | `/routine wakeup` or schedule | Turn on lamps, send weather briefing |
+| Wind Down | `/routine winddown` | Dim lights, set scene |
+| Goodnight | `/routine lightsout` | All devices off |
+| Leave Home | Geofence exit | All devices off, send confirmation via Telegram |
+| Arriving Home | Geofence enter + after sunset | Main lamp on, Ollama-generated welcome message via Telegram |
+| Late Night Auto Off | Time-based | Safety shutoff for forgotten devices |
+| Left Lights On | Geofence exit + lights still on | Alert via Telegram |
+
+## Ollama HA conversation agent setup
+
+### Prerequisites
+
+- Ollama running on the host and accessible from HA's Docker container
+- Mistral v0.3 or later pulled (`ollama pull mistral`)
+- HA running with Telegram bot integration in broadcast mode (already configured)
+
+### Step 1 — Verify Ollama accessibility from HA
+
+Since HA runs with `network_mode: host`, it can reach Ollama on localhost:
+
+```bash
+sudo docker exec homeassistant curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; [print(m['name']) for m in json.load(sys.stdin)['models']]"
+```
+
+This should list `mistral:latest` (or `mistral:v0.3`). If it fails, Ollama isn't reachable from inside the container.
+
+### Step 2 — Verify Mistral version supports tool calling
+
+```bash
+ollama show mistral --modelfile | head -5
+```
+
+If you're on an older Mistral tag, upgrade:
+
+```bash
+ollama pull mistral
+```
+
+The `latest` tag as of 2025+ points to v0.3 which includes function calling support.
+
+### Step 3 — Add Ollama integration in HA
+
+1. Settings → Devices & Services → Add Integration → search "Ollama"
+2. URL: `http://localhost:11434`
+3. Select model: `mistral`
+4. Enable **"Control Home Assistant"** — this gives the agent access to the Assist API
+5. Set keep-alive to `-1` (keep model in memory)
+
+### Step 4 — Create a Voice Assistant with the Ollama agent
+
+1. Settings → Voice Assistants → Add Assistant
+2. Name: `JAI` (or whatever you prefer)
+3. Conversation agent: select your Ollama agent
+4. Language: English
+
+### Step 5 — Expose entities to the agent
+
+1. Settings → Voice Assistants → Expose tab
+2. Select entities the AI can control (keep under 25 for reliability with 7B models)
+3. Recommended to expose: all smart plugs, light switches, and any sensors you want the AI to read
+
+### Step 6 — Test via Developer Tools
+
+Go to Developer Tools → Actions:
+
+```yaml
+action: conversation.process
+data:
+  agent_id: conversation.jai  # or whatever your agent entity ID is
+  text: "turn off the main lamp"
+```
+
+If the lamp turns off, the Ollama conversation agent is working with tool calling.
+
+### Step 7 — Wire into bot.py
+
+Add a function in `homeassistant.py` that calls `conversation.process` via the HA REST API. This lets natural language messages in Telegram route through bot.py → Ollama → HA Assist API → device control.
+
+```python
+# Addition to homeassistant.py
+def conversation_process(text: str) -> str:
+    """Send natural language text to HA's Ollama conversation agent."""
+    url = f"{HA_URL}/api/conversation/process"
+    payload = {
+        "text": text,
+        "agent_id": "conversation.jai",  # your Ollama agent entity ID
+        "language": "en",
+    }
+    resp = requests.post(url, headers=HEADERS, json=payload, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    return result.get("response", {}).get("speech", {}).get("plain", {}).get("speech", "No response from assistant.")
+```
+
 ## Quick start
 
 ### Prerequisites
 
 - Ubuntu 24.04 LTS (headless)
-- [Docker](https://docs.docker.com/engine/install/ubuntu/) and Docker Compose installed
-- [Ollama](https://ollama.com) installed
-- Mistral pulled: `ollama pull mistral`
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
-- Your Telegram user ID from [@userinfobot](https://t.me/userinfobot)
+- Docker and Docker Compose installed
+- Ollama installed with Mistral v0.3 pulled
+- A Telegram bot token from @BotFather
+- Your Telegram user ID from @userinfobot
 - Tailscale installed and authenticated
-- RPI on the same local network with etherwake configured (for WOL) - Can use another machine as a jump server
-- SSH key generated on the server and added to each target machine's `authorized_keys`
+- RPI on the same LAN with etherwake configured (for WOL)
+- SSH key generated and added to each target machine's `authorized_keys`
 
 ### Home Assistant setup
 
 ```bash
-# Create HA directory
 mkdir -p ~/home-assistant
 
-# Create docker-compose.yml
 cat <<EOF > ~/home-assistant/docker-compose.yml
 version: "3.8"
 services:
@@ -113,263 +267,127 @@ services:
       - TZ=America/Los_Angeles
 EOF
 
-# Start Home Assistant
 cd ~/home-assistant
 docker compose up -d
 ```
 
 HA will be available at `http://localhost:8123`. Complete onboarding, enable 2FA, and generate a long-lived access token (Profile → Security → Long-Lived Access Tokens).
 
-### Device integration
-
-| Device | Integration | Notes |
-|--------|-------------|-------|
-| Nous A9 smart plugs | Local Tuya (HACS) | Requires Tuya developer account to extract local keys |
-| Shelly Gen2 plug | Shelly (built-in) | Auto-discovers on LAN via mDNS |
-
-`network_mode: host` in the Docker config is required for mDNS device discovery (Shelly auto-discovery).
-
-### Bot installation
+### Bot setup
 
 ```bash
-git clone https://github.com/Jicxer/telegram-homeassistant-ai.git
-cd telegram-homeassistant-ai
-
-python3 -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
-
+git clone https://github.com/Jicxer/telegram-homeassistant-ai.git ~/home-ai
+cd ~/home-ai
 cp .env.example .env
-nano .env  # fill in your values
+# Edit .env with your values
+pip install -r requirements.txt
 ```
 
-### Running as a service
+### Environment variables
+
+```
+TELEGRAM_BOT_TOKEN=        # From @BotFather
+ALLOWED_USER_ID=           # Your Telegram user ID
+OLLAMA_URL=                # http://localhost:11434
+OLLAMA_MODEL=              # mistral
+HA_URL=                    # http://localhost:8123
+HA_TOKEN=                  # Long-lived access token from HA
+WEATHER_LOCATION=          # City for weather lookups
+RPI_HOST=                  # RPI IP or Tailscale hostname
+RPI_USER=                  # SSH user on RPI
+SHELLY_IP=                 # Shelly plug IP (legacy, optional)
+```
+
+### Run as a service
 
 ```bash
 sudo cp scripts/homeai.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable homeai
 sudo systemctl start homeai
-sudo systemctl status homeai
 ```
 
-### Running manually (for development)
+## HA device integrations
 
-```bash
-source venv/bin/activate
-python3 src/bot.py
-```
-
-## Environment variables
-
-Copy `.env.example` to `.env` and fill in your values. Never commit `.env` to git.
-
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Token from BotFather |
-| `ALLOWED_USER_ID` | Your Telegram user ID (restricts access to you only) |
-| `OLLAMA_MODEL` | Model name (default: `mistral`) |
-| `OLLAMA_HOST` | Ollama API host (default: `http://localhost:11434`) |
-| `HA_URL` | Home Assistant API URL (default: `http://localhost:8123`) |
-| `HA_TOKEN` | Long-lived access token from HA |
-| `SHELLY_DEVICE_IP` | Local IP of your Shelly Gen2 smart plug |
-| `WEATHER_LOCATION` | Default location for weather queries |
-| `RPI_HOST` | Tailscale IP of your RPI (WOL relay) |
-| `RPI_USER` | SSH username on the RPI |
-| `MACHINE_<NAME>_HOST` | Tailscale IP of a targetable machine |
-| `MACHINE_<NAME>_USER` | SSH username on that machine (must have sudo) |
-| `PROTECTED_MACHINES` | Comma-separated machine names excluded from shutdown/reboot |
-
-### Adding a new machine
-
-Add two lines to `.env` for each new machine — no code changes required:
-
-```bash
-MACHINE_SERVERNAME_HOST=100.x.x.x
-MACHINE_SERVERNAME_USER=yourusername
-```
-
-Then add the server's SSH public key to that machine's `authorized_keys`.
-
-## Bot commands
-
-### Device control (via Home Assistant)
-
-| Command | Description |
-|---------|-------------|
-| `/ha on <device>` | Turn a device on |
-| `/ha off <device>` | Turn a device off |
-| `/ha toggle <device>` | Toggle a device |
-| `/ha status` | Show state of all HA devices |
-
-Device names are resolved from HA friendly names — use names like `bedroom lamp`, `main lamp`, `pc plug`.
-
-### Routines (HA automations)
-
-| Command | Description |
-|---------|-------------|
-| `/routine` | List all available routines and their status |
-| `/routine wakeup` | Turn on main lamp (scheduled: Wed-Thu 5am, Fri-Sat 5:30am) |
-| `/routine winddown` | Main lamp off, bedroom lamp on |
-| `/routine lightsout` | All lamps off |
-| `/routine leaving` | All lamps off (triggered by geofence or manual) |
-
-### Machine control
-
-| Command | Description |
-|---------|-------------|
-| `/wake` | Send WOL magic packet to desktop via RPI |
-| `/shutdown <machine> [now\|+minutes\|HH:MM]` | Shutdown a machine |
-| `/reboot <machine>` | Reboot a machine immediately |
-
-### Legacy / direct control
-
-| Command | Description |
-|---------|-------------|
-| `/plug on/off/status` | Direct Shelly plug control (bypasses HA) |
-| `/plug power` | Show wattage, voltage, current, device temp |
-
-### General
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all available commands |
-
-Any message without a `/` prefix is sent to the local LLM for natural language conversation.
-
-### Shutdown examples
-
-```
-/shutdown desktop now
-/shutdown desktop +10       ← shuts down in 10 minutes
-/shutdown desktop 23:00     ← shuts down at 11pm
-/reboot desktop
-```
-
-## Home Assistant automations
-
-These run inside HA independently of the bot — if `bot.py` crashes, these still fire:
-
-| Automation | Trigger | Action |
-|------------|---------|--------|
-| Wake Up | Wed-Thu 5:00am / Fri-Sat 5:30am | Turn on main lamp |
-| Wind Down | Manual only (`/routine winddown`) | Main lamp off, bedroom lamp on |
-| Lights Out | Manual only (`/routine lightsout`) | All lamps off |
-| Late Night Auto-Off | Daily at 2:00am | All lamps off (safety net) |
-| Sunset Lights | Sunset | Turn on main lamp |
-
-### Geofencing (in progress)
-
-The HA Companion app on iOS reports location to HA. Automations trigger when your phone enters or leaves the Home zone:
-
-- **Leaving home** → turn off all lamps
-- **Arriving home** → turn on main lamp (only if after sunset)
+| Device | Integration | Protocol | Entity prefix |
+|--------|-------------|----------|---------------|
+| Nous A9 plug × 3 | Local Tuya | LAN (no cloud) | `switch.nous_*` |
+| Shelly Gen2 plug | Shelly | mDNS / HTTP | `switch.shelly_*` |
+| iPhone (geofencing) | HA Companion | HTTPS | `device_tracker.*` |
 
 ## Security
 
-- Bot only responds to a single whitelisted Telegram user ID
-- All secrets stored in `.env`, never hardcoded
-- Machine config loaded dynamically from environment — no IPs or usernames in source code
-- Home Assistant secured with 2FA (TOTP) and long-lived token auth
-- HA port (8123) firewalled to localhost and Tailscale only (`ufw`)
-- HA Cloud / Nabu Casa disabled — no external cloud dependency
-- Ollama API bound to localhost only — not exposed to the network
-- Remote access via Tailscale encrypted tunnel only
-- No public ports exposed
-- SSH key-based auth only, password auth disabled
-- Destructive actions (wake, shutdown, reboot) are explicit `/commands` only — never natural language
-- The server running this bot is protected from remote shutdown/reboot via `PROTECTED_MACHINES`
+- No cloud services for device control — all LAN or Tailscale
+- No Nabu Casa — HA is not exposed to the internet
+- HA 2FA enabled
+- Telegram bot restricted to single `ALLOWED_USER_ID`
+- All secrets in `.env`, never committed (`.gitignore` enforced from day one)
+- SSH key-only authentication to all machines
+- UFW firewall active on host — only SSH (22), HA (8123), and Ollama (11434) open on LAN
+- Tailscale for remote access instead of port forwarding
+- HA long-lived access token scoped to bot operations
+- Ollama conversation agent entity exposure kept under 25 entities to limit attack surface
+- Destructive commands (`/shutdown`, `/reboot`, `/wake`) require explicit `/` prefix — never routed through natural language to prevent LLM misinterpretation
 
-### Restricting SSH keys on target machines
+## Roadmap
 
-For additional hardening, add the laptop's public key to target machines with a command restriction in `authorized_keys`:
+### Phase 1 — core tools ✅
+- [x] Telegram bot connected to local LLM (Ollama + Mistral)
+- [x] Conversation memory within session
+- [x] Wake-on-LAN support (via RPI relay)
+- [x] Shelly Gen2 smart plug control
+- [x] Weather tool (wttr.in)
+- [x] `/shutdown` and `/reboot` command tools
+- [x] Host machine health monitoring (CPU temp, load)
+
+### Phase 2 — HA integration ✅
+- [x] Home Assistant deployed (Docker)
+- [x] Local Tuya — Nous A9 plugs integrated (no cloud)
+- [x] Shelly plug migrated to HA
+- [x] HA REST API client (`homeassistant.py`)
+- [x] Routine system (`/routine` commands mapped to HA automations)
+- [x] Telegram bot integration in HA (broadcast mode)
+- [x] Geofencing via HA Companion app (leaving/arriving automations)
+
+### Phase 3 — natural language + agent behavior (current)
+- [ ] Ollama conversation agent in HA (Assist API tool calling for NLP device control)
+- [ ] Wire `conversation.process` into bot.py (natural language → HA Ollama agent)
+- [ ] Sensor-contextual Ollama messages (query HA sensor → Ollama prompt → AI response)
+- [ ] Ollama-generated welcome/alert messages in HA automations (command_line sensors)
+- [ ] Energy monitoring (Nous plug power consumption → daily/weekly Telegram digest)
+- [ ] Automated HA config backups
+- [ ] Linkind bulb integration (pending protocol identification)
+
+### Phase 4 — knowledge + RAG
+- [ ] Local document ingestion (PDF, markdown, txt)
+- [ ] ChromaDB vector store
+- [ ] Web search fallback (SearXNG or Tavily)
+- [ ] RAG as an agent tool
+- [ ] Claude API fallback for explicit lookup requests
+
+### Phase 5 — advanced agent
+- [ ] Multi-step autonomous task execution
+- [ ] Proactive alerts (CPU temp spike, device anomalies)
+- [ ] Voice input via Whisper (Telegram voice messages)
+- [ ] AppDaemon for complex Python automations inside HA
+- [ ] Daily digest automation (summarize all state changes, send via Telegram)
+
+## Headless laptop notes
+
+The host machine runs with the lid closed. To prevent suspend on lid close:
 
 ```
-command="sudo shutdown now",no-port-forwarding,no-X11-forwarding,no-agent-forwarding ssh-ed25519 AAAA... homeai-bot
-```
-
-This ensures the key can only run `sudo shutdown now` even if compromised.
-
-## Headless laptop setup notes
-
-If running on a repurposed laptop, prevent lid-close from triggering suspend:
-
-```ini
 # /etc/systemd/logind.conf
 HandleLidSwitch=ignore
 HandleLidSwitchExternalPower=ignore
 HandleLidSwitchDocked=ignore
 ```
 
-```bash
-sudo systemctl restart systemd-logind
-sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-```
-
-> ⚠️ These settings can be reset by system updates. Re-apply after major upgrades.
-
-## Roadmap
-
-### Phase 1 — Foundation ✅
-
-- [x] Telegram bot connected to local LLM
-- [x] Conversation memory within session
-- [x] Wake-on-LAN support via RPI relay
-- [x] Shelly Gen2 smart plug control
-- [x] Power consumption monitoring (`/plug power`)
-- [x] Remote shutdown and reboot with time arguments
-- [x] Weather tool (wttr.in)
-
-### Phase 2 — Home Assistant integration ✅
-
-- [x] Home Assistant installed via Docker
-- [x] Nous A9 smart plugs connected via Local Tuya
-- [x] Shelly plug migrated to HA
-- [x] Bot controls devices through HA REST API (`/ha` commands)
-- [x] Friendly name resolution for devices
-- [x] HA automations (wake up, wind down, lights out, sunset, late night auto-off)
-- [x] `/routine` command to trigger HA automations from Telegram
-- [x] HA secured (2FA, UFW, no cloud)
-- [x] Tailscale remote access to HA dashboard
-
-### Phase 3 — Smart automations (current)
-
-- [ ] Geofencing setup via HA Companion app (in progress)
-- [ ] Telegram notifications in HA (enables "left lights on" alerts)
-- [ ] Natural language tool calling (Ollama routes "turn on the lamp" → HA)
-- [ ] Energy monitoring dashboard + weekly Telegram summary
-- [ ] Automated HA backups
-- [ ] Dynamic routine discovery (bot auto-discovers HA automations)
-- [ ] Fix `/help` command (Markdown parsing issue)
-
-### Phase 4 — Advanced
-
-- [ ] AppDaemon for complex Python automations
-- [ ] Persistent memory across restarts
-- [ ] Voice input via Whisper (Telegram voice messages)
-- [ ] Additional device integrations (Linkind WiFi bulb, etc.)
-- [ ] Proactive alerts (CPU temp spike, plug power threshold)
-- [ ] Claude API fallback for explicit lookup requests
-
-### Phase 5 — Knowledge & RAG
-
-- [ ] Local document ingestion (PDF, markdown, txt)
-- [ ] ChromaDB vector store
-- [ ] Web search fallback (SearXNG or Tavily)
-- [ ] RAG as an agent tool
-- [ ] Multi-step autonomous task execution
+Apply with `sudo systemctl restart systemd-logind`. Note: this setting can revert on system updates — monitor after `apt upgrade`.
 
 ## Power consumption
 
-Estimated running cost on Portland, OR electricity rates ($0.20/kWh):
-
-| State | Draw | $/month | $/year |
-|-------|------|---------|--------|
-| Idle (model unloaded, HA running) | ~50W | ~$7.30 | ~$88 |
-| Active inference | ~150W | — | — |
-
-Model unloads from VRAM after 5 minutes of inactivity (`OLLAMA_KEEP_ALIVE=5m`). HA container adds negligible overhead (~5W).
+Idle draw with Ollama model loaded: ~35W. Under LLM inference load: ~85W (GPU active). HA container adds negligible overhead (~5W).
 
 ## License
 
