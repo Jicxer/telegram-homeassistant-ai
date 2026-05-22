@@ -16,7 +16,8 @@ from tools.homeassistant import (
     get_all_states as ha_get_all_states,
     all_off as ha_all_off,
     run_routine as ha_run_routine,
-    list_routines as ha_list_routines
+    list_routines as ha_list_routines,
+    conversation_process as ha_conversation_process,
 )
 import ollama
 from tools.wol import wake_desktop
@@ -28,6 +29,7 @@ ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID"))
 MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a home automation assistant running locally on a private server.
 You can answer questions and hold conversations.
@@ -37,6 +39,52 @@ Be concise and helpful. If you are unsure about something, say so honestly."""
 
 conversation_history = {}
 MAX_HISTORY = 20
+
+# ---------------------------------------------------------------------------
+# Device-intent keyword detection
+# ---------------------------------------------------------------------------
+# If any of these patterns appear in the message, route to HA's Ollama
+# conversation agent for NLP device control. Patterns are checked against
+# the lowercased message. Order doesn't matter — first match wins.
+# ---------------------------------------------------------------------------
+
+DEVICE_INTENT_KEYWORDS = [
+    # Direct control verbs
+    "turn on",
+    "turn off",
+    "switch on",
+    "switch off",
+    "toggle",
+    "dim",
+    "brighten",
+    "set brightness",
+    "set temperature",
+    "set the",
+    # State queries
+    "is the",
+    "are the",
+    "status of",
+    "what is the state",
+    "check the",
+    # Device references (common nouns for your setup)
+    "lamp",
+    "light",
+    "plug",
+    "fan",
+    "thermostat",
+    "lock",
+    "cover",
+    # Scene / automation triggers via NLP
+    "run routine",
+    "activate scene",
+    "start routine",
+]
+
+
+def _has_device_intent(message: str) -> bool:
+    """Return True if the message looks like a device-control request."""
+    msg_lower = message.lower()
+    return any(kw in msg_lower for kw in DEVICE_INTENT_KEYWORDS)
 
 
 def is_authorized(user_id: int) -> bool:
@@ -83,10 +131,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /routine lightsout — All lamps off
     /routine leaving — All lamps off (except server)
 
+    <b>Natural Language</b>
+    You can also say things like "turn off the bedroom lamp"
+    or "is the main lamp on?" and the AI will handle it.
+
     <b>Help</b>
     /help — Show this message
-
-    You can also just chat naturally for questions and home automation help.
     """
     await update.message.reply_text(help_text, parse_mode="HTML")
 
@@ -291,6 +341,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
 
+    # ----- Route 1: Device-intent → HA Ollama conversation agent -----
+    if _has_device_intent(user_message):
+        logger.info(f"Device intent detected, routing to HA conversation agent: {user_message}")
+        await update.message.reply_text("Talking to Home Assistant...")
+
+        # Run the blocking HTTP call in a thread so we don't block the event loop
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, ha_conversation_process, user_message)
+
+        if result["success"]:
+            # Agent executed a device action — use its response
+            reply = result["speech"] or "Done."
+            logger.info(f"HA agent succeeded: {reply}")
+            await update.message.reply_text(reply)
+            return
+        elif result["speech"]:
+            # Agent responded but didn't act (e.g. "I couldn't find that device")
+            # Fall through to Ollama so the user still gets a helpful response,
+            # but log what HA said for debugging.
+            logger.info(f"HA agent responded without action: {result['speech']}")
+            # Still send the HA response since it's contextual
+            await update.message.reply_text(result["speech"])
+            return
+        else:
+            # HA call failed entirely — fall through to Ollama
+            logger.warning("HA conversation.process failed, falling back to Ollama")
+
+    # ----- Route 2: General chat → Ollama directly -----
     if user_id not in conversation_history:
         conversation_history[user_id] = []
 
