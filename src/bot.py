@@ -40,6 +40,7 @@ Personality:
 - Keep responses concise — 1-3 sentences unless the user asks for detail.
 - When reporting device states or information, include a brief actionable suggestion. For example: "The bedroom lamp is currently off. Shall I turn it on?"
 - On first interaction in a session, greet the user briefly. For example: "Good evening. How may I assist you?"
+- Be helpful and proactive in suggesting actions or providing information and also sarcastic humorous, witty and sarcastic at times.
 
 Capabilities:
 - Control smart home devices (lamps, plugs, switches) via Home Assistant
@@ -59,12 +60,180 @@ conversation_history = {}
 MAX_HISTORY = 20
 
 # ---------------------------------------------------------------------------
-# Device-intent keyword detection
+# Natural language routing
 # ---------------------------------------------------------------------------
-# If any of these patterns appear in the message, route to HA's Ollama
-# conversation agent for NLP device control. Patterns are checked against
-# the lowercased message. Order doesn't matter — first match wins.
+# Messages are checked top-down through three tiers:
+#   1. Direct tool routes — keyword match → call Python function directly,
+#      no LLM involved. Instant response.
+#   2. Device-intent routes — keyword match → HA Ollama conversation agent
+#      for NLP device control via Assist API tool calling.
+#   3. Fallback — everything else → Ollama directly for general chat.
 # ---------------------------------------------------------------------------
+
+# --- Tier 1: Direct tool keywords (bypass LLM entirely) ---
+
+WEATHER_KEYWORDS = [
+    "what's the weather",
+    "whats the weather",
+    "how's the weather",
+    "hows the weather",
+    "is it raining",
+    "is it going to rain",
+    "is it sunny",
+    "is it cold",
+    "is it hot",
+    "weather outside",
+    "what's it like outside",
+    "whats it like outside",
+    "temperature outside",
+    "do i need a jacket",
+    "do i need an umbrella",
+    "should i bring",
+]
+
+STATUS_KEYWORDS = [
+    "what's on",
+    "whats on",
+    "what is on",
+    "what lights are on",
+    "what devices are on",
+    "which lights are on",
+    "which devices are on",
+    "device status",
+    "show me the status",
+    "what's turned on",
+    "whats turned on",
+    "anything on",
+    "everything off",
+    "is everything off",
+    "are all lights off",
+    "home status",
+]
+
+FLIP_KEYWORDS = [
+    "flip a coin",
+    "coin flip",
+    "heads or tails",
+    "flip coin",
+    "toss a coin",
+]
+
+ROUTINE_LIST_KEYWORDS = [
+    "what routines",
+    "list routines",
+    "available routines",
+    "show routines",
+    "what automations",
+    "list automations",
+    "what can you run",
+    "show me routines",
+    "my routines",
+]
+
+TIME_KEYWORDS = [
+    "what time is it",
+    "what's the time",
+    "whats the time",
+    "current time",
+    "what day is it",
+    "what's the date",
+    "whats the date",
+    "today's date",
+    "what is today",
+]
+
+HELP_KEYWORDS = [
+    "what can you do",
+    "help me",
+    "what are your commands",
+    "what commands",
+    "show me commands",
+    "what are you capable of",
+    "what do you do",
+    "how do i use you",
+    "how does this work",
+    "what can i ask",
+]
+
+# --- Tier 1b: Routine trigger phrases (natural language → run routine) ---
+
+ROUTINE_TRIGGERS = {
+    "wakeup": [
+        "good morning",
+        "morning routine",
+        "wake up routine",
+        "start my day",
+        "gm",
+    ],
+    "winddown": [
+        "wind down",
+        "winding down",
+        "relax mode",
+        "chill mode",
+    ],
+    "lightsout": [
+        "goodnight",
+        "good night",
+        "lights out",
+        "bedtime",
+        "going to bed",
+        "going to sleep",
+        "night night",
+        "time for bed",
+        "nighty night",
+    ],
+    "leaving": [
+        "i'm leaving",
+        "im leaving",
+        "leaving home",
+        "heading out",
+        "i'm going out",
+        "im going out",
+        "leaving the house",
+        "bye house",
+    ],
+    "latenight": [
+        "late night mode",
+        "late night",
+    ],
+}
+
+
+def _check_routine_trigger(message: str) -> str | None:
+    """Check if message matches a routine trigger phrase. Returns alias or None."""
+    msg_lower = message.lower()
+    for alias, phrases in ROUTINE_TRIGGERS.items():
+        if any(phrase in msg_lower for phrase in phrases):
+            return alias
+    return None
+
+
+def _check_direct_route(message: str) -> str | None:
+    """Check if message matches a direct tool route. Returns route name or None."""
+    msg_lower = message.lower()
+
+    if any(kw in msg_lower for kw in WEATHER_KEYWORDS):
+        return "weather"
+    if any(kw in msg_lower for kw in STATUS_KEYWORDS):
+        return "status"
+    if any(kw in msg_lower for kw in FLIP_KEYWORDS):
+        return "flip"
+    if any(kw in msg_lower for kw in ROUTINE_LIST_KEYWORDS):
+        return "routine_list"
+    if any(kw in msg_lower for kw in TIME_KEYWORDS):
+        return "time"
+    if any(kw in msg_lower for kw in HELP_KEYWORDS):
+        return "help"
+
+    # Check routine trigger phrases
+    routine = _check_routine_trigger(message)
+    if routine:
+        return f"routine:{routine}"
+
+    return None
+
+
+# --- Tier 2: Device-intent keywords (route to HA conversation agent) ---
 
 DEVICE_INTENT_KEYWORDS = [
     # Direct control verbs
@@ -78,31 +247,36 @@ DEVICE_INTENT_KEYWORDS = [
     "set brightness",
     "set temperature",
     "set the",
-    # State queries
-    "is the",
-    "are the",
-    "status of",
-    "what is the state",
-    "check the",
-    # Device references (common nouns for your setup)
-    "lamp",
-    "light",
-    "plug",
-    "fan",
-    "thermostat",
-    "lock",
-    "cover",
     # Scene / automation triggers via NLP
     "run routine",
     "activate scene",
     "start routine",
 ]
 
+# Device nouns — only trigger HA routing when paired with a control verb
+DEVICE_NOUNS = ["lamp", "light", "plug", "fan", "thermostat", "lock", "cover"]
+
+CONTROL_VERBS = [
+    "turn", "switch", "toggle", "dim", "brighten", "set",
+    "check", "is the", "are the", "what is", "what's the",
+]
+
 
 def _has_device_intent(message: str) -> bool:
     """Return True if the message looks like a device-control request."""
     msg_lower = message.lower()
-    return any(kw in msg_lower for kw in DEVICE_INTENT_KEYWORDS)
+
+    # Explicit control phrases always match
+    if any(kw in msg_lower for kw in DEVICE_INTENT_KEYWORDS):
+        return True
+
+    # Device noun + control verb combo (avoids false positives on bare nouns)
+    has_noun = any(noun in msg_lower for noun in DEVICE_NOUNS)
+    has_verb = any(verb in msg_lower for verb in CONTROL_VERBS)
+    if has_noun and has_verb:
+        return True
+
+    return False
 
 
 def is_authorized(user_id: int) -> bool:
@@ -180,7 +354,7 @@ async def flip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Need at least 1 coin to flip.")
             return
         if count > 100:
-            await update.message.reply_text("Sir... that's too many coins.")
+            await update.message.reply_text("Sir... that's too many coins to flip.")
             return
 
     flips = [random.choice(["Heads", "Tails"]) for _ in range(count)]
@@ -406,7 +580,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
 
-    # ----- Route 1: Device-intent → HA Ollama conversation agent -----
+    # ----- Tier 1: Direct tool routes (no LLM, instant) -----
+    direct_route = _check_direct_route(user_message)
+    if direct_route:
+        logger.info(f"Direct route matched: {direct_route} for: {user_message}")
+
+        if direct_route == "weather":
+            result = get_weather()
+            await update.message.reply_text(result)
+            return
+
+        elif direct_route == "status":
+            result = ha_get_all_states()
+            await update.message.reply_text(result)
+            return
+
+        elif direct_route == "flip":
+            coin = random.choice(["Heads", "Tails"])
+            await update.message.reply_text(f"🪙 {coin}!")
+            return
+
+        elif direct_route == "routine_list":
+            result = ha_list_routines()
+            await update.message.reply_text(result)
+            return
+
+        elif direct_route == "time":
+            from datetime import datetime
+            now = datetime.now()
+            time_str = now.strftime("%I:%M %p")
+            date_str = now.strftime("%A, %B %d, %Y")
+            await update.message.reply_text(f"🕐 {time_str}\n📅 {date_str}")
+            return
+
+        elif direct_route == "help":
+            # Reuse the help command handler
+            await help_command(update, context)
+            return
+
+        elif direct_route.startswith("routine:"):
+            alias = direct_route.split(":", 1)[1]
+            result = ha_run_routine(alias)
+            await update.message.reply_text(result)
+            return
+
+    # ----- Tier 2: Device-intent → HA Ollama conversation agent -----
     if _has_device_intent(user_message):
         logger.info(f"Device intent detected, routing to HA conversation agent: {user_message}")
         await update.message.reply_text("Talking to Home Assistant...")
@@ -423,17 +641,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         elif result["speech"]:
             # Agent responded but didn't act (e.g. "I couldn't find that device")
-            # Fall through to Ollama so the user still gets a helpful response,
-            # but log what HA said for debugging.
             logger.info(f"HA agent responded without action: {result['speech']}")
-            # Still send the HA response since it's contextual
             await update.message.reply_text(result["speech"])
             return
         else:
             # HA call failed entirely — fall through to Ollama
             logger.warning("HA conversation.process failed, falling back to Ollama")
 
-    # ----- Route 2: General chat → Ollama directly -----
+    # ----- Tier 3: General chat → Ollama directly -----
     if user_id not in conversation_history:
         conversation_history[user_id] = []
 

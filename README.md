@@ -6,10 +6,13 @@ A self-hosted home automation AI companion. Send natural language commands via T
 
 - Chat with a local LLM via Telegram from anywhere
 - Control smart home devices with natural language (via HA Ollama conversation agent)
+- Trigger routines with natural phrases ("goodnight", "good morning", "I'm leaving")
+- Ask about weather, device status, time, and routines conversationally
 - Run routines and automations through Telegram or geofencing triggers
 - Wake, shutdown, and reboot machines remotely via WOL and SSH
 - Monitor smart plug power consumption
 - Get AI-generated contextual messages from HA sensors (weather, device states, alerts)
+- Flip coins with stats
 - Conversation memory within session
 - Runs 24/7 as a systemd service, restarts automatically on crash
 - Accessible remotely via Tailscale (private network) and SSH
@@ -149,24 +152,45 @@ Available routines: `wakeup`, `winddown`, `lightsout`, `leaving`, `latenight`
 | `/plug on\|off\|status\|power` | Legacy Shelly plug control |
 | `/help` | List available commands |
 
-Natural language messages (not prefixed with `/`) are routed based on intent:
-- Device-related messages ("turn off the bedroom lamp", "is the main lamp on?") → HA Ollama conversation agent
-- Everything else → Ollama directly for general chat
-
 ## Natural language routing
 
-bot.py uses keyword-based intent detection to decide where to route non-command messages. If the message contains device-control verbs ("turn on", "turn off", "toggle", "dim"), state queries ("is the", "check the", "status of"), or device nouns ("lamp", "light", "plug"), it routes to HA's Ollama conversation agent via `conversation.process`. Everything else goes directly to Ollama for general chat.
+Messages without a `/` prefix are routed through a three-tier system:
 
-The HA conversation agent uses the Assist API with tool calling to control exposed entities. The agent entity ID is configured via the `HA_CONVERSATION_AGENT` environment variable.
+### Tier 1 — Direct tool routes (instant, no LLM)
+
+Keyword matches that call Python functions directly. No LLM round-trip, instant response.
+
+| You say | What happens |
+|---------|-------------|
+| "what's the weather" / "do I need a jacket" | Calls `get_weather()` |
+| "what lights are on" / "device status" | Calls `ha_get_all_states()` |
+| "flip a coin" / "heads or tails" | Random coin flip |
+| "what routines do I have" / "list routines" | Calls `ha_list_routines()` |
+| "what time is it" / "what day is it" | Returns current time and date |
+| "what can you do" / "help me" | Shows help message |
+| "good morning" / "start my day" | Runs `wakeup` routine |
+| "goodnight" / "going to bed" / "bedtime" | Runs `lightsout` routine |
+| "I'm leaving" / "heading out" | Runs `leaving` routine |
+| "wind down" / "relax mode" | Runs `winddown` routine |
+
+### Tier 2 — Device control (HA Ollama conversation agent)
+
+Messages with device-control intent ("turn on bedroom lamp", "switch off main lamp") route to HA's Ollama conversation agent via `conversation.process`. The agent uses the Assist API with tool calling to control exposed entities.
+
+Device nouns ("lamp", "light", "plug") only trigger this route when paired with a control verb ("turn", "switch", "toggle", "check") to avoid false positives.
+
+### Tier 3 — General chat (Ollama)
+
+Everything else goes directly to Ollama with conversation history for general chat. JAI responds with a professional butler persona.
 
 ## Home Assistant automations
 
 | Automation | Trigger | Actions |
 |------------|---------|---------|
-| Good Morning | `/routine wakeup` or schedule | Turn on lamps, send weather briefing |
-| Wind Down | `/routine winddown` | Dim lights, set scene |
-| Goodnight | `/routine lightsout` | All devices off |
-| Leave Home | Geofence exit | All devices off, send confirmation via Telegram |
+| Good Morning | `/routine wakeup` or "good morning" | Turn on lamps, send weather briefing |
+| Wind Down | `/routine winddown` or "wind down" | Dim lights, set scene |
+| Goodnight | `/routine lightsout` or "goodnight" | All devices off |
+| Leave Home | Geofence exit or "I'm leaving" | All devices off, send confirmation via Telegram |
 | Arriving Home | Geofence enter + after sunset | Main lamp on, Ollama-generated welcome message via Telegram |
 | Late Night Auto Off | Time-based | Safety shutoff for forgotten devices |
 | Left Lights On | Geofence exit + lights still on | Alert via Telegram |
@@ -353,9 +377,15 @@ sudo systemctl start homeai
 - [x] Keyword-based intent routing in bot.py (device commands → HA, general chat → Ollama)
 - [x] Model evaluation (Mistral 7B → Qwen 2.5 7B → Llama 3.2 3B for HA tool calling)
 - [x] Entity friendly name cleanup for reliable NLP matching
-- [x] JAI persona (system prompt)
+- [x] JAI butler persona (system prompt)
+- [x] Three-tier message routing (direct tools → HA agent → Ollama)
+- [x] Natural language routine triggers ("goodnight" → lightsout, "good morning" → wakeup)
+- [x] Direct tool routes for weather, device status, time, help, coin flip
+- [x] `/flip` command with multi-coin support and stats
 
 ### Phase 4 — sensor context + monitoring (current)
+- [ ] System health tool (`/system` — CPU temp, RAM, disk, uptime)
+- [ ] Natural language system health queries ("how's the server", "CPU temp")
 - [ ] Sensor-contextual Ollama messages (query HA sensor → Ollama prompt → AI response)
 - [ ] Ollama-generated welcome/alert messages in HA automations
 - [ ] Energy monitoring (Nous plug power consumption → daily/weekly Telegram digest)
