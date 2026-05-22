@@ -32,29 +32,38 @@ MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are JAI, a professional home automation assistant running locally on a private server. You serve as a personal butler — composed, efficient, and attentive.
+SYSTEM_PROMPT = """You are JAI, a home automation assistant running locally on a private server. You're sharp, efficient, and have a dry wit — like a butler who's seen it all and isn't easily impressed.
 
 Personality:
-- Professional and composed, like a well-trained butler. Never overly casual but never stiff.
-- Address the user respectfully. You may use "sir" sparingly for emphasis, not every message.
-- Keep responses concise — 1-3 sentences unless the user asks for detail.
-- When reporting device states or information, include a brief actionable suggestion. For example: "The bedroom lamp is currently off. Shall I turn it on?"
-- On first interaction in a session, greet the user briefly. For example: "Good evening. How may I assist you?"
-- Be helpful and proactive in suggesting actions or providing information and also sarcastic humorous, witty and sarcastic at times.
+- Friendly but with dry wit. You're helpful first, funny second.
+- Light sarcasm is welcome — subtle, never mean. Think deadpan observations, not insults.
+- You may comment on the user's habits when relevant. If they're turning lights on at 2am, a brief quip is fair game. Keep it to one line, not a lecture.
+- Keep responses concise — 1-3 sentences unless asked for detail.
+- On first interaction in a session, greet the user briefly with some personality. Not a generic "How may I assist you" — something with a little life.
+- Don't force humor into every response. A straight answer is fine when the question is straightforward.
 
-Capabilities:
-- Control smart home devices (lamps, plugs, switches) via Home Assistant
-- Wake, shutdown, and reboot machines on the network
-- Provide weather reports and forecasts
-- Run routines (wakeup, winddown, lightsout, leaving, latenight)
-- Answer general knowledge questions
+Capabilities you ACTUALLY have in this chat:
+- Answer general knowledge questions and hold conversations
+- That's it. You are a conversational assistant in this context.
 
-Limitations:
-- If asked something outside your capabilities, respond honestly: "That's outside my capabilities at the moment. Here's what I can help with:" followed by a brief summary of what you can do.
-- Never fabricate device states or claim to have done something you did not.
-- Never execute destructive actions (shutdown, reboot) without explicit /commands from the user.
+Things that exist but require /commands (you CANNOT do these through conversation):
+- /ha on/off <device> — control smart home devices
+- /wake <machine> — wake a machine via Wake-on-LAN
+- /shutdown <machine> — shutdown a machine
+- /reboot <machine> — reboot a machine
+- /weather — get weather
+- /forecast — get forecast
+- /routine <name> — run a routine (wakeup, winddown, lightsout, leaving, latenight)
+- /flip — flip a coin
+- /plug — control Shelly plug
 
-Available /commands: /wake, /shutdown, /reboot, /plug, /ha, /routine, /weather, /forecast, /machines, /flip, /help"""
+CRITICAL RULES:
+- NEVER claim you performed an action (turned off a light, shut down a machine, checked a device, etc.) You CANNOT perform actions in this chat. Only /commands can do that.
+- NEVER say "Done", "I've shut down", "I've turned off", "I've checked" or anything implying you took an action. You did not.
+- If the user asks you to do something that requires a /command, tell them the exact /command to use. You can be witty about it — "I'd love to, but my hands are tied. Try: /shutdown desktop" — but never pretend you did it.
+- NEVER suggest capabilities you don't have. Don't offer to "check on devices" or "wake it up later" unless you cite the specific /command.
+- Only suggest /commands that are listed above. Do not invent commands.
+- If unsure whether you can do something, say so honestly."""
 
 conversation_history = {}
 MAX_HISTORY = 20
@@ -208,6 +217,46 @@ def _check_routine_trigger(message: str) -> str | None:
     return None
 
 
+# --- Safety redirects: catch destructive action requests before the LLM ---
+
+SAFETY_REDIRECT_KEYWORDS = {
+    "shutdown": [
+        "shutdown", "shut down", "shut it down",
+        "power off", "power down",
+        "turn off my computer", "turn off my pc",
+        "turn off the desktop", "turn off my desktop",
+        "kill the machine",
+    ],
+    "reboot": [
+        "reboot", "restart my computer", "restart my pc",
+        "restart the desktop", "restart my desktop",
+    ],
+    "wake": [
+        "wake my computer", "wake my pc", "wake my desktop",
+        "wake up my computer", "wake up my pc", "wake up the desktop",
+        "wake up my desktop", "wake the desktop",
+        "turn on my computer", "turn on my pc", "turn on my desktop",
+        "start my computer", "start my pc", "start my desktop",
+        "boot up", "boot my",
+    ],
+}
+
+
+def _check_safety_redirect(message: str) -> tuple[str, str] | None:
+    """Check if message is requesting a destructive action that requires a /command.
+    Returns (action, command_hint) or None."""
+    msg_lower = message.lower()
+    for action, phrases in SAFETY_REDIRECT_KEYWORDS.items():
+        if any(phrase in msg_lower for phrase in phrases):
+            if action == "shutdown":
+                return ("shutdown", "/shutdown <machine>")
+            elif action == "reboot":
+                return ("reboot", "/reboot <machine>")
+            elif action == "wake":
+                return ("wake", "/wake <machine>")
+    return None
+
+
 def _check_direct_route(message: str) -> str | None:
     """Check if message matches a direct tool route. Returns route name or None."""
     msg_lower = message.lower()
@@ -354,7 +403,7 @@ async def flip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Need at least 1 coin to flip.")
             return
         if count > 100:
-            await update.message.reply_text("Sir... that's too many coins to flip.")
+            await update.message.reply_text("Let's keep it under 100 flips.")
             return
 
     flips = [random.choice(["Heads", "Tails"]) for _ in range(count)]
@@ -579,6 +628,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     user_message = update.message.text
+
+    # ----- Safety redirect: catch destructive actions before anything else -----
+    safety = _check_safety_redirect(user_message)
+    if safety:
+        action, command_hint = safety
+        logger.info(f"Safety redirect: {action} request caught: {user_message}")
+        await update.message.reply_text(
+            f"For safety, {action} requires an explicit command.\n"
+            f"Use: {command_hint}\n\n"
+            f"Type /machines to see available machines."
+        )
+        return
 
     # ----- Tier 1: Direct tool routes (no LLM, instant) -----
     direct_route = _check_direct_route(user_message)
