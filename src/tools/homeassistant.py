@@ -20,6 +20,9 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
+# Ollama conversation agent entity ID in HA
+HA_CONVERSATION_AGENT = os.getenv("HA_CONVERSATION_AGENT", "conversation.jai_minstral")
+
 # Entity IDs containing any of these substrings are hidden from output.
 # They're config/diagnostic entities, not things you'd toggle day-to-day.
 HIDDEN_KEYWORDS = [
@@ -369,6 +372,61 @@ def all_off() -> str:
 
 
 # ---------------------------------------------------------------------------
+# NLP device control via HA Ollama conversation agent
+# ---------------------------------------------------------------------------
+
+def conversation_process(text: str) -> dict:
+    """Send natural language text to HA's Ollama conversation agent.
+
+    Returns a dict with:
+        success (bool): True if the agent executed a device action
+        speech  (str):  The agent's natural language response
+        raw     (dict): Full API response for debugging
+    """
+    try:
+        r = requests.post(
+            f"{HA_URL}/api/conversation/process",
+            headers=HEADERS,
+            json={
+                "text": text,
+                "agent_id": HA_CONVERSATION_AGENT,
+                "language": "en",
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        result = r.json()
+    except requests.RequestException as e:
+        logger.error(f"HA conversation.process error: {e}")
+        return {
+            "success": False,
+            "speech": "",
+            "raw": {},
+        }
+
+    response = result.get("response", {})
+    speech = (
+        response
+        .get("speech", {})
+        .get("plain", {})
+        .get("speech", "")
+    )
+
+    # Check if the agent actually executed device actions.
+    # HA returns success/failed lists in response.data when tool calls fire.
+    data = response.get("data", {})
+    succeeded = data.get("success", [])
+    failed = data.get("failed", [])
+    acted = len(succeeded) > 0 or len(failed) > 0
+
+    return {
+        "success": acted,
+        "speech": speech,
+        "raw": result,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Quick test
 # ---------------------------------------------------------------------------
 
@@ -383,3 +441,7 @@ if __name__ == "__main__":
     print(list_devices())
     print("\n=== All States ===")
     print(get_all_states())
+    print("\n=== Conversation Test ===")
+    result = conversation_process("what devices are available?")
+    print(f"Success: {result['success']}")
+    print(f"Speech: {result['speech']}")
