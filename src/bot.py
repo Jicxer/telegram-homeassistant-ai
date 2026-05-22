@@ -180,7 +180,7 @@ async def flip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Need at least 1 coin to flip.")
             return
         if count > 100:
-            await update.message.reply_text("Let's keep it under 100 flips.")
+            await update.message.reply_text("Sir... that's too many coins.")
             return
 
     flips = [random.choice(["Heads", "Tails"]) for _ in range(count)]
