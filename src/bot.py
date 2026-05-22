@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import random
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
@@ -31,11 +32,28 @@ MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a home automation assistant running locally on a private server.
-You can answer questions and hold conversations.
-Available commands:
-- /wake - Wake up the desktop computer
-Be concise and helpful. If you are unsure about something, say so honestly."""
+SYSTEM_PROMPT = """You are JAI, a professional home automation assistant running locally on a private server. You serve as a personal butler — composed, efficient, and attentive.
+
+Personality:
+- Professional and composed, like a well-trained butler. Never overly casual but never stiff.
+- Address the user respectfully. You may use "sir" sparingly for emphasis, not every message.
+- Keep responses concise — 1-3 sentences unless the user asks for detail.
+- When reporting device states or information, include a brief actionable suggestion. For example: "The bedroom lamp is currently off. Shall I turn it on?"
+- On first interaction in a session, greet the user briefly. For example: "Good evening. How may I assist you?"
+
+Capabilities:
+- Control smart home devices (lamps, plugs, switches) via Home Assistant
+- Wake, shutdown, and reboot machines on the network
+- Provide weather reports and forecasts
+- Run routines (wakeup, winddown, lightsout, leaving, latenight)
+- Answer general knowledge questions
+
+Limitations:
+- If asked something outside your capabilities, respond honestly: "That's outside my capabilities at the moment. Here's what I can help with:" followed by a brief summary of what you can do.
+- Never fabricate device states or claim to have done something you did not.
+- Never execute destructive actions (shutdown, reboot) without explicit /commands from the user.
+
+Available /commands: /wake, /shutdown, /reboot, /plug, /ha, /routine, /weather, /forecast, /machines, /flip, /help"""
 
 conversation_history = {}
 MAX_HISTORY = 20
@@ -124,12 +142,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /ha toggle entity_id — Toggle a device
     /ha alloff — Turn everything off
     
-    Routines
+    <b>Routines</b>
     /routine — List all routines
     /routine wakeup — Turn on main lamp
     /routine winddown — Main lamp off, bedroom lamp on
     /routine lightsout — All lamps off
     /routine leaving — All lamps off (except server)
+
+    <b>Fun</b>
+    /flip — Flip a coin
+    /flip 5 — Flip multiple coins
 
     <b>Natural Language</b>
     You can also say things like "turn off the bedroom lamp"
@@ -139,6 +161,49 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /help — Show this message
     """
     await update.message.reply_text(help_text, parse_mode="HTML")
+
+
+async def flip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Flip one or more coins."""
+    if not is_authorized(update.effective_user.id):
+        await update.message.reply_text("Unauthorized.")
+        return
+
+    count = 1
+    if context.args:
+        try:
+            count = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("Usage: /flip [number]\nExample: /flip 5")
+            return
+        if count < 1:
+            await update.message.reply_text("Need at least 1 coin to flip.")
+            return
+        if count > 100:
+            await update.message.reply_text("Let's keep it under 100 flips.")
+            return
+
+    flips = [random.choice(["Heads", "Tails"]) for _ in range(count)]
+
+    if count == 1:
+        coin = flips[0]
+        emoji = "🪙"
+        await update.message.reply_text(f"{emoji} {coin}!")
+    else:
+        heads = flips.count("Heads")
+        tails = flips.count("Tails")
+        results = ", ".join(flips)
+
+        # Truncate individual results if too many
+        if count > 20:
+            summary = f"🪙 Flipped {count} coins:\n\n⚡ {heads} Heads | {tails} Tails"
+        else:
+            summary = (
+                f"🪙 Flipped {count} coins:\n"
+                f"{results}\n\n"
+                f"⚡ {heads} Heads | {tails} Tails"
+            )
+        await update.message.reply_text(summary)
 
 
 async def routine_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -404,6 +469,7 @@ app.add_handler(CommandHandler("weather", weather_command))
 app.add_handler(CommandHandler("forecast", forecast_command))
 app.add_handler(CommandHandler("ha", ha_command))
 app.add_handler(CommandHandler("routine", routine_command))
+app.add_handler(CommandHandler("flip", flip_command))
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

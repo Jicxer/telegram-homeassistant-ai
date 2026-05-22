@@ -29,7 +29,7 @@ A self-hosted home automation AI companion. Send natural language commands via T
 │                                                              │
 │  ┌──────────┐    ┌──────────┐    ┌──────────────────────┐   │
 │  │  bot.py   │───▶│  Ollama  │───▶│  Tool Functions      │   │
-│  │ (systemd) │    │ (Mistral)│    │  homeassistant.py    │   │
+│  │ (systemd) │    │(llama3.2)│    │  homeassistant.py    │   │
 │  │           │    │          │    │  weather.py          │   │
 │  │ Telegram  │    │          │    │  power.py / wol.py   │   │
 │  │ polling   │    │          │    │  system.py           │   │
@@ -67,7 +67,7 @@ A self-hosted home automation AI companion. Send natural language commands via T
 | Component | Technology |
 |-----------|------------|
 | LLM runtime | [Ollama](https://ollama.com) |
-| Model | Mistral 7B v0.3 (quantized, function calling) |
+| Model | Llama 3.2 3B (general chat + HA device control) |
 | Bot interface | python-telegram-bot |
 | Device hub | [Home Assistant](https://www.home-assistant.io/) (Docker) |
 | NLP device control | HA Ollama conversation agent (Assist API) |
@@ -75,6 +75,7 @@ A self-hosted home automation AI companion. Send natural language commands via T
 | Wake-on-LAN | etherwake via RPI relay |
 | Remote access | Tailscale + SSH |
 | Geofencing | HA Companion app (iOS) |
+| GPU | NVIDIA GeForce RTX 2070 (8GB VRAM) |
 | OS | Ubuntu 24.04 LTS (headless) |
 
 ## Project structure
@@ -82,7 +83,7 @@ A self-hosted home automation AI companion. Send natural language commands via T
 ```
 telegram-homeassistant-ai/
 ├── src/
-│   ├── bot.py                 # Telegram bot entry point and command routing
+│   ├── bot.py                 # Telegram bot entry point, command routing, NLP intent detection
 │   └── tools/
 │       ├── homeassistant.py   # HA REST API + conversation.process client
 │       ├── machines.py        # Machine registry loaded from environment
@@ -110,6 +111,9 @@ telegram-homeassistant-ai/
 | `/ha off <device>` | Turn off a device via HA |
 | `/ha status` | List all device states |
 | `/ha status <device>` | Get specific device state |
+| `/ha toggle <device>` | Toggle a device |
+| `/ha alloff` | Turn everything off |
+| `/ha devices` | List all controllable devices |
 
 ### Routines
 | Command | Description |
@@ -125,15 +129,35 @@ Available routines: `wakeup`, `winddown`, `lightsout`, `leaving`, `latenight`
 | `/wake <machine>` | Wake a machine via WOL |
 | `/shutdown <machine>` | Shutdown a machine via SSH |
 | `/reboot <machine>` | Reboot a machine via SSH |
+| `/machines` | List all configured machines |
+
+### Weather
+| Command | Description |
+|---------|-------------|
+| `/weather [location]` | Current conditions |
+| `/forecast [location] [1-3]` | Multi-day forecast |
+
+### Fun
+| Command | Description |
+|---------|-------------|
+| `/flip` | Flip a coin |
+| `/flip <number>` | Flip multiple coins with stats |
 
 ### General
 | Command | Description |
 |---------|-------------|
-| `/weather` | Current weather and forecast |
-| `/system` | Host machine health (CPU temp, load) |
+| `/plug on\|off\|status\|power` | Legacy Shelly plug control |
 | `/help` | List available commands |
 
-Natural language messages (not prefixed with `/`) are sent to Ollama for conversational responses and, once the Ollama HA conversation agent is configured, can route to device control through the Assist API.
+Natural language messages (not prefixed with `/`) are routed based on intent:
+- Device-related messages ("turn off the bedroom lamp", "is the main lamp on?") → HA Ollama conversation agent
+- Everything else → Ollama directly for general chat
+
+## Natural language routing
+
+bot.py uses keyword-based intent detection to decide where to route non-command messages. If the message contains device-control verbs ("turn on", "turn off", "toggle", "dim"), state queries ("is the", "check the", "status of"), or device nouns ("lamp", "light", "plug"), it routes to HA's Ollama conversation agent via `conversation.process`. Everything else goes directly to Ollama for general chat.
+
+The HA conversation agent uses the Assist API with tool calling to control exposed entities. The agent entity ID is configured via the `HA_CONVERSATION_AGENT` environment variable.
 
 ## Home Assistant automations
 
@@ -152,8 +176,8 @@ Natural language messages (not prefixed with `/`) are sent to Ollama for convers
 ### Prerequisites
 
 - Ollama running on the host and accessible from HA's Docker container
-- Mistral v0.3 or later pulled (`ollama pull mistral`)
-- HA running with Telegram bot integration in broadcast mode (already configured)
+- A model with tool calling support pulled (llama3.2:3b recommended for HA)
+- HA running with Telegram bot integration in broadcast mode
 
 ### Step 1 — Verify Ollama accessibility from HA
 
@@ -163,83 +187,56 @@ Since HA runs with `network_mode: host`, it can reach Ollama on localhost:
 sudo docker exec homeassistant curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; [print(m['name']) for m in json.load(sys.stdin)['models']]"
 ```
 
-This should list `mistral:latest` (or `mistral:v0.3`). If it fails, Ollama isn't reachable from inside the container.
-
-### Step 2 — Verify Mistral version supports tool calling
-
-```bash
-ollama show mistral --modelfile | head -5
-```
-
-If you're on an older Mistral tag, upgrade:
-
-```bash
-ollama pull mistral
-```
-
-The `latest` tag as of 2025+ points to v0.3 which includes function calling support.
-
-### Step 3 — Add Ollama integration in HA
+### Step 2 — Add Ollama integration in HA
 
 1. Settings → Devices & Services → Add Integration → search "Ollama"
 2. URL: `http://localhost:11434`
-3. Select model: `mistral`
-4. Enable **"Control Home Assistant"** — this gives the agent access to the Assist API
-5. Set keep-alive to `-1` (keep model in memory)
+3. Select model: `llama3.2:3b`
+4. Enable **"Control Home Assistant"**
+5. Disable **"Thinking"** (not supported by most models, causes 400 errors)
+6. Set keep-alive to `-1` (keep model in memory)
+7. Set max history to `0` (each device command should be stateless)
 
-### Step 4 — Create a Voice Assistant with the Ollama agent
+### Step 3 — Create a Voice Assistant with the Ollama agent
 
 1. Settings → Voice Assistants → Add Assistant
-2. Name: `JAI` (or whatever you prefer)
+2. Name: `JAI`
 3. Conversation agent: select your Ollama agent
 4. Language: English
 
-### Step 5 — Expose entities to the agent
+### Step 4 — Expose entities to the agent
 
 1. Settings → Voice Assistants → Expose tab
-2. Select entities the AI can control (keep under 25 for reliability with 7B models)
-3. Recommended to expose: all smart plugs, light switches, and any sensors you want the AI to read
+2. Select entities the AI can control (keep under 25 for reliability with small models)
+3. Use clean friendly names (e.g. "Bedroom Lamp" not "Bedroom Lamp Socket 1") — small models struggle with noisy names
 
-### Step 6 — Test via Developer Tools
-
-Go to Developer Tools → Actions:
+### Step 5 — Test via Developer Tools
 
 ```yaml
 action: conversation.process
 data:
-  agent_id: conversation.jai  # or whatever your agent entity ID is
-  text: "turn off the main lamp"
+  agent_id: conversation.jai_minstral
+  text: "turn off the bedroom lamp"
 ```
 
-If the lamp turns off, the Ollama conversation agent is working with tool calling.
+### Model selection notes
 
-### Step 7 — Wire into bot.py
+| Model | Tool calling | HA reliability | Chat quality | VRAM |
+|-------|-------------|----------------|-------------|------|
+| Llama 3.2 3B | ✅ | Best for HA | Adequate | 2.0 GB |
+| Qwen 2.5 7B | ✅ | Inconsistent entity matching | Good | 5.3 GB |
+| Mistral 7B v0.3 | ⚠️ Raw mode only | Outputs tool calls as text, doesn't execute | Best | 5.2 GB |
 
-Add a function in `homeassistant.py` that calls `conversation.process` via the HA REST API. This lets natural language messages in Telegram route through bot.py → Ollama → HA Assist API → device control.
-
-```python
-# Addition to homeassistant.py
-def conversation_process(text: str) -> str:
-    """Send natural language text to HA's Ollama conversation agent."""
-    url = f"{HA_URL}/api/conversation/process"
-    payload = {
-        "text": text,
-        "agent_id": "conversation.jai",  # your Ollama agent entity ID
-        "language": "en",
-    }
-    resp = requests.post(url, headers=HEADERS, json=payload, timeout=30)
-    resp.raise_for_status()
-    result = resp.json()
-    return result.get("response", {}).get("speech", {}).get("plain", {}).get("speech", "No response from assistant.")
-```
+Llama 3.2 3B is recommended as the single model for both chat and device control on 8GB VRAM cards. Using one model avoids VRAM swapping latency.
 
 ## Quick start
 
 ### Prerequisites
 
 - Ubuntu 24.04 LTS (headless)
+- NVIDIA GPU with 8GB+ VRAM
 - Docker and Docker Compose installed
-- Ollama installed with Mistral v0.3 pulled
+- Ollama installed with llama3.2:3b pulled
 - A Telegram bot token from @BotFather
 - Your Telegram user ID from @userinfobot
 - Tailscale installed and authenticated
@@ -289,9 +286,10 @@ pip install -r requirements.txt
 TELEGRAM_BOT_TOKEN=        # From @BotFather
 ALLOWED_USER_ID=           # Your Telegram user ID
 OLLAMA_URL=                # http://localhost:11434
-OLLAMA_MODEL=              # mistral
+OLLAMA_MODEL=              # llama3.2:3b
 HA_URL=                    # http://localhost:8123
 HA_TOKEN=                  # Long-lived access token from HA
+HA_CONVERSATION_AGENT=     # conversation.jai_minstral (your Ollama agent entity ID)
 WEATHER_LOCATION=          # City for weather lookups
 RPI_HOST=                  # RPI IP or Tailscale hostname
 RPI_USER=                  # SSH user on RPI
@@ -349,23 +347,32 @@ sudo systemctl start homeai
 - [x] Telegram bot integration in HA (broadcast mode)
 - [x] Geofencing via HA Companion app (leaving/arriving automations)
 
-### Phase 3 — natural language + agent behavior (current)
-- [ ] Ollama conversation agent in HA (Assist API tool calling for NLP device control)
-- [ ] Wire `conversation.process` into bot.py (natural language → HA Ollama agent)
+### Phase 3 — natural language + agent behavior ✅
+- [x] Ollama conversation agent in HA (Assist API tool calling)
+- [x] Wire `conversation.process` into bot.py (natural language → HA Ollama agent)
+- [x] Keyword-based intent routing in bot.py (device commands → HA, general chat → Ollama)
+- [x] Model evaluation (Mistral 7B → Qwen 2.5 7B → Llama 3.2 3B for HA tool calling)
+- [x] Entity friendly name cleanup for reliable NLP matching
+- [x] JAI persona (system prompt)
+
+### Phase 4 — sensor context + monitoring (current)
 - [ ] Sensor-contextual Ollama messages (query HA sensor → Ollama prompt → AI response)
-- [ ] Ollama-generated welcome/alert messages in HA automations (command_line sensors)
+- [ ] Ollama-generated welcome/alert messages in HA automations
 - [ ] Energy monitoring (Nous plug power consumption → daily/weekly Telegram digest)
 - [ ] Automated HA config backups
 - [ ] Linkind bulb integration (pending protocol identification)
+- [ ] Error handling in handle_message (try/except with user-friendly error messages)
+- [ ] Telegram typing indicator instead of "Thinking..." messages
+- [ ] Response time logging for performance tracking
 
-### Phase 4 — knowledge + RAG
+### Phase 5 — knowledge + RAG
 - [ ] Local document ingestion (PDF, markdown, txt)
 - [ ] ChromaDB vector store
 - [ ] Web search fallback (SearXNG or Tavily)
 - [ ] RAG as an agent tool
 - [ ] Claude API fallback for explicit lookup requests
 
-### Phase 5 — advanced agent
+### Phase 6 — advanced agent
 - [ ] Multi-step autonomous task execution
 - [ ] Proactive alerts (CPU temp spike, device anomalies)
 - [ ] Voice input via Whisper (Telegram voice messages)
